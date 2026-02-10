@@ -25,6 +25,14 @@ import './util/filters.js';
 // Sets up the routing and the base app (using vue-router)
 import router from './route.js';
 
+// Normalize old hashbang URLs (#!/...) to Vue Router hash mode (#/...)
+if (window.location.hash.startsWith('#!/')) {
+  window.location.hash = window.location.hash.replace('#!/', '#/');
+}
+if (window.location.hash === '#!') {
+  window.location.hash = '#/';
+}
+
 // Sets up the pinia store
 import pinia from './stores';
 
