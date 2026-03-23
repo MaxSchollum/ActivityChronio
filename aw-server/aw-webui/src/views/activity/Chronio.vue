@@ -4,7 +4,7 @@ div.chronio-view
     .chronio-brand
       .chronio-logo
       span Chronio
-    .chronio-controls
+    .chronio-topbar-right
       .chronio-date-nav
         button.chronio-nav-btn(@click="prevDay") &larr;
         .chronio-chip.date(@click="showDatePicker = !showDatePicker")
@@ -17,103 +17,128 @@ div.chronio-view
             @blur="showDatePicker = false"
           )
         button.chronio-nav-btn(@click="nextDay" :disabled="isToday") &rarr;
-      .chronio-seg
-        button(
-          v-for="seg in segments"
-          :key="seg.key"
-          :class="{ 'is-active': activeSegment === seg.key }"
-          @click="activeSegment = seg.key"
-        ) {{ seg.label }}
-      .chronio-slider
-        .track
-        .thumb(:style="{ left: sliderPercent + '%' }")
       .chronio-metric
         span.label Tracked:
-        span.value {{ trackedTime }}
+        span.value {{ totalTrackedTime }}
       .chronio-search
-        span.icon
         input(type="text" placeholder="Search…" v-model="searchQuery")
 
   div.chronio-loading(v-if="loading")
-    span Loading activity data…
+    span Loading activity data&hellip;
 
-  .chronio-grid(v-else)
-    .chronio-col
-      .chronio-section
-        .chronio-section-title Stats
+  .chronio-body(v-else)
 
-      .chronio-card
-        .chronio-card-title Most Used Apps
-        ul.chronio-list(v-if="mostUsed.length")
-          li(v-for="app in mostUsed" :key="app.name")
-            span.name {{ app.name }}
-            span.time {{ app.time }}
-            span.dot(:style="{ background: app.color }")
-        .chronio-empty(v-else) No app data for this period
+    //- ─── LEFT SIDEBAR ───────────────────────────────────────────────
+    .chronio-sidebar
+      nav.sidebar-nav
+        .sidebar-nav-item.active Activities
+        .sidebar-nav-item Stats
+        .sidebar-nav-item Reports
 
-      .chronio-card
-        .chronio-card-title Productivity Score
-        .chronio-bars(v-if="productivityBars.length")
-          span.bar(
-            v-for="(bar, i) in productivityBars"
-            :key="i"
-            :style="{ height: bar.height + '%', background: bar.color }"
+      .sidebar-tree
+        .sidebar-summary-row(
+          @click="selectedCatFilter = null"
+          :class="{active: selectedCatFilter === null}"
+        )
+          span.sr-name All Activities
+          span.sr-time {{ totalTrackedTime }}
+        .sidebar-summary-row(
+          @click="selectedCatFilter = '__unassigned__'"
+          :class="{active: selectedCatFilter === '__unassigned__'}"
+        )
+          span.sr-name Unassigned
+          span.sr-time {{ unassignedTime }}
+
+        .sidebar-divider
+
+        .sidebar-section-header
+          span Private
+          button.sidebar-add-btn(@click.stop="createTopCategory") +
+
+        template(v-for="row in sidebarFlatTree" :key="row.key")
+          .sidebar-cat-row(
+            :style="{paddingLeft: (row.depth * 14 + 10) + 'px'}"
+            :class="{active: selectedCatFilter === row.key}"
+            @click="selectedCatFilter = row.key"
           )
-        .chronio-empty(v-else) No category data yet
+            button.sr-expand-btn(
+              v-if="row.hasChildren"
+              @click.stop="toggleSidebarNode(row.key)"
+            ) {{ sidebarExpanded[row.key] ? '▾' : '▸' }}
+            span.sr-expand-spacer(v-else)
+            .sr-dot(:style="{background: row.color}")
+            span.sr-name {{ row.label }}
+            span.sr-time {{ row.time }}
 
-    .chronio-col
-      .chronio-section
-        .chronio-section-title Activity Timeline
-      .chronio-timeline(v-if="timeline.length")
-        template(v-for="item in timelineWithMarkers")
-          .chronio-time(v-if="item.type === 'time'" :key="'t-' + item.label") {{ item.label }}
-          .chronio-block(
+    //- ─── CENTER: ALL ACTIVITIES ─────────────────────────────────────
+    .chronio-center
+      .center-header
+        .center-title
+          | All Activities:&nbsp;
+          strong {{ totalTrackedTime }}
+        .view-toggle
+          button(:class="{active: viewMode === 'unified'}" @click="viewMode = 'unified'") Unified
+          button(:class="{active: viewMode === 'chrono'}" @click="viewMode = 'chrono'") Chronological
+
+      .activities-scroll
+        //- UNIFIED VIEW
+        template(v-if="viewMode === 'unified'")
+          .act-empty(v-if="!filteredActivitiesTree.length") No activity data for this period
+          template(v-else v-for="catNode in filteredActivitiesTree" :key="catNode.catKey")
+            .act-row.act-row--cat(
+              @click="toggleExpandCat(catNode.catKey)"
+              :class="{expanded: expandedCats[catNode.catKey]}"
+            )
+              span.act-expand {{ expandedCats[catNode.catKey] ? '▾' : '▸' }}
+              .act-dot(:style="{background: catNode.color}")
+              span.act-name {{ catNode.catLabel }}
+              span.act-dur {{ formatDuration(catNode.duration) }}
+
+            template(v-if="expandedCats[catNode.catKey]" v-for="appNode in catNode.apps" :key="catNode.catKey + '/' + appNode.app")
+              .act-row.act-row--app(
+                @click="toggleExpandApp(catNode.catKey + '/' + appNode.app)"
+              )
+                .act-indent
+                .act-app-icon(:style="{background: appNode.color}")
+                span.act-name {{ appNode.app }}
+                span.act-dur {{ formatDuration(appNode.duration) }}
+
+              template(v-if="expandedApps[catNode.catKey + '/' + appNode.app]" v-for="t in appNode.titles" :key="catNode.catKey + '/' + appNode.app + '/' + t.title")
+                .act-row.act-row--title
+                  .act-indent2
+                  span.act-title(:title="t.title") {{ t.title }}
+                  span.act-dur {{ formatDuration(t.duration) }}
+
+        //- CHRONOLOGICAL VIEW
+        template(v-else)
+          .act-empty(v-if="!chronoEvents.length") No activity data for this period
+          .act-row.act-row--chrono(
+            v-else
+            v-for="e in chronoEvents"
+            :key="e.ts"
+          )
+            .act-dot(:style="{background: e.catColor}")
+            .act-app-icon(:style="{background: e.appColor}")
+            span.act-app {{ e.app }}
+            span.act-title(:title="e.title") {{ e.title }}
+            span.act-time {{ e.timeStr }}
+            span.act-dur {{ formatDuration(e.duration) }}
+
+    //- ─── RIGHT: TIMELINE ────────────────────────────────────────────
+    .chronio-timeline-panel
+      .timeline-scroll
+        .chronio-empty(v-if="!timeline.length") No timeline data for this period
+        template(v-else v-for="item in timelineWithMarkers")
+          .tl-time(v-if="item.type === 'time'" :key="'t-' + item.label") {{ item.label }}
+          .tl-block(
             v-else
             :key="'b-' + item.label + item.range"
-            :style="{ background: item.color, minHeight: item.height + 'px', cursor: 'pointer' }"
-            @click="selectEvent(item.event)"
+            :style="{background: item.color, minHeight: item.height + 'px'}"
+            @click="selectedEvent = item.event"
           )
-            .block-header
-              .title {{ item.label }}
-              .time {{ item.range }}
-            .tag(v-if="item.tag") {{ item.tag }}
-      .chronio-empty(v-else) No timeline data for this period
-
-    .chronio-col
-      .chronio-section
-        .chronio-section-title Activity Details
-      .chronio-card.detail(v-if="selectedDetail")
-        .detail-header
-          .app
-            .app-icon(:style="{ background: selectedDetail.color || 'rgba(255,255,255,0.08)' }")
-            .app-meta
-              .name {{ selectedDetail.name }}
-              .status {{ selectedDetail.status }}
-          .status-dot(v-if="selectedDetail.isActive")
-        .detail-time {{ selectedDetail.duration }}
-        .detail-sub Started at {{ selectedDetail.startTime }}
-        .detail-pill(v-if="selectedDetail.category") {{ selectedDetail.category }}
-      .chronio-card.detail(v-else)
-        .chronio-empty Click a timeline block to see details
-
-      .chronio-section.inline
-        .chronio-section-title Recent Sessions
-        a.view-all(@click="") View all
-      .chronio-card
-        table.chronio-table(v-if="recent.length")
-          thead
-            tr
-              th App
-              th Time
-              th Dur.
-          tbody
-            tr(v-for="(row, i) in recent" :key="i" @click="selectEvent(row.event)" style="cursor: pointer")
-              td
-                span.dot(:style="{ background: row.color }")
-                | {{ row.app }}
-              td {{ row.time }}
-              td {{ row.dur }}
-        .chronio-empty(v-else) No recent sessions
+            .tl-block-header
+              .tl-title {{ item.label }}
+              .tl-time-range {{ item.range }}
 </template>
 
 <script lang="ts">
@@ -128,21 +153,6 @@ import { dateToTimeperiod } from '~/util/timeperiod';
 import { getColorFromString } from '~/util/color';
 import { getClient } from '~/util/awclient';
 
-interface SegmentDef {
-  key: string;
-  label: string;
-  startHour: number;
-  endHour: number;
-}
-
-const SEGMENTS: SegmentDef[] = [
-  { key: 'morning', label: 'Morning', startHour: 6, endHour: 12 },
-  { key: 'afternoon', label: 'Afternoon', startHour: 12, endHour: 17 },
-  { key: 'evening', label: 'Evening', startHour: 17, endHour: 21 },
-  { key: 'night', label: 'Night', startHour: 21, endHour: 6 },
-];
-
-// Stable gradient colors per app name
 const GRADIENTS: string[] = [
   'linear-gradient(135deg, #3c7bff, #5aa1ff)',
   'linear-gradient(135deg, #8a3bff, #c04cff)',
@@ -154,7 +164,14 @@ const GRADIENTS: string[] = [
   'linear-gradient(135deg, #f59e0b, #fbbf24)',
 ];
 
+// Browser names to strip from window titles
+const BROWSER_SUFFIXES = [
+  'Google Chrome', 'Chrome', 'Safari', 'Firefox', 'Arc',
+  'Brave Browser', 'Microsoft Edge', 'Opera',
+];
+
 function formatDuration(seconds: number): string {
+  if (!seconds || seconds < 1) return '0s';
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const h = Math.floor(seconds / 3600);
   const m = Math.round((seconds % 3600) / 60);
@@ -162,7 +179,7 @@ function formatDuration(seconds: number): string {
   return `${m}m`;
 }
 
-function formatHHMM(ts: string): string {
+function formatHHMM(ts: any): string {
   return moment(ts).format('HH:mm');
 }
 
@@ -175,46 +192,39 @@ export default {
 
   data() {
     return {
-      selectedDate: '',
-      activeSegment: 'morning' as string,
-      searchQuery: '',
-      showDatePicker: false,
-      loading: true,
-      selectedEventIndex: null as number | null,
-      segments: SEGMENTS,
+      selectedDate: '' as string,
+      searchQuery: '' as string,
+      showDatePicker: false as boolean,
+      loading: true as boolean,
+      selectedEvent: null as any,
       windowEvents: [] as any[],
       afkEvents: [] as any[],
+      // expand/filter state
+      expandedCats: {} as Record<string, boolean>,
+      expandedApps: {} as Record<string, boolean>,
+      sidebarExpanded: {} as Record<string, boolean>,
+      selectedCatFilter: null as string | null,
+      viewMode: 'unified' as 'unified' | 'chrono',
     };
   },
 
   computed: {
-    activityStore() {
-      return useActivityStore();
-    },
-    bucketsStore() {
-      return useBucketsStore();
-    },
-    settingsStore() {
-      return useSettingsStore();
-    },
-    categoryStore() {
-      return useCategoryStore();
-    },
+    activityStore() { return useActivityStore(); },
+    bucketsStore() { return useBucketsStore(); },
+    settingsStore() { return useSettingsStore(); },
+    categoryStore() { return useCategoryStore(); },
 
     isToday(): boolean {
       return moment(this.selectedDate).isSame(moment(), 'day');
     },
 
     host(): string {
-      // Pick the first host that has both window and AFK buckets
       const hosts = this.bucketsStore.hosts;
       for (const h of hosts) {
         if (
           this.bucketsStore.bucketsWindow(h).length > 0 &&
           this.bucketsStore.bucketsAFK(h).length > 0
-        ) {
-          return h;
-        }
+        ) return h;
       }
       return hosts.length > 0 ? hosts[0] : '';
     },
@@ -224,127 +234,218 @@ export default {
       return moment(this.selectedDate).format('MMM D, YYYY');
     },
 
-    currentSegment(): SegmentDef {
-      return SEGMENTS.find(s => s.key === this.activeSegment) || SEGMENTS[0];
-    },
-
-    segmentStart(): moment.Moment {
-      return moment(this.selectedDate).hour(this.currentSegment.startHour).minute(0).second(0);
-    },
-
-    segmentEnd(): moment.Moment {
-      const seg = this.currentSegment;
-      if (seg.endHour <= seg.startHour) {
-        // Night wraps to next day
-        return moment(this.selectedDate).add(1, 'day').hour(seg.endHour).minute(0).second(0);
-      }
-      return moment(this.selectedDate).hour(seg.endHour).minute(0).second(0);
-    },
-
-    sliderPercent(): number {
-      const now = moment();
-      const start = this.segmentStart;
-      const end = this.segmentEnd;
-      if (now.isBefore(start)) return 0;
-      if (now.isAfter(end)) return 100;
-      return ((now.valueOf() - start.valueOf()) / (end.valueOf() - start.valueOf())) * 100;
-    },
-
-    // Build not-afk intervals from AFK events (skip zero-duration pings)
+    // AFK intervals for the day
     notAfkIntervals(): { start: number; end: number }[] {
       return (this.afkEvents || [])
-        .filter(e => e.data?.status === 'not-afk' && e.duration > 0)
-        .map(e => ({
+        .filter((e: any) => e.data?.status === 'not-afk' && e.duration > 0)
+        .map((e: any) => ({
           start: moment(e.timestamp).valueOf(),
           end: moment(e.timestamp).add(e.duration, 'seconds').valueOf(),
         }));
     },
 
-    // Filter window events: must overlap with a not-afk interval AND the selected segment
-    segmentEvents(): any[] {
+    // Full-day AFK-filtered window events (no segment restriction)
+    activeWindowEvents(): any[] {
       const events = this.windowEvents || [];
       const intervals = this.notAfkIntervals;
-      const segStart = this.segmentStart.valueOf();
-      const segEnd = this.segmentEnd.valueOf();
-
-      return events.filter(e => {
+      return events.filter((e: any) => {
         const eStart = moment(e.timestamp).valueOf();
         const eEnd = eStart + e.duration * 1000;
-        // Must overlap with segment
-        if (eEnd <= segStart || eStart >= segEnd) return false;
-        // Must have meaningful overlap with at least one not-afk interval
-        const totalNotAfk = intervals.reduce((sum, iv) => {
-          const overlapStart = Math.max(eStart, iv.start);
-          const overlapEnd = Math.min(eEnd, iv.end);
-          return sum + Math.max(0, overlapEnd - overlapStart);
+        const totalNotAfk = intervals.reduce((sum: number, iv: any) => {
+          return sum + Math.max(0, Math.min(eEnd, iv.end) - Math.max(eStart, iv.start));
         }, 0);
         const eventDur = eEnd - eStart;
-        // Require at least 10% of the event to be not-afk
-        return totalNotAfk > 0 && (totalNotAfk / eventDur) > 0.1;
+        return totalNotAfk > 0 && totalNotAfk / eventDur > 0.1;
       });
     },
 
-    filteredEvents(): any[] {
-      if (!this.searchQuery) return this.segmentEvents;
-      const q = this.searchQuery.toLowerCase();
-      return this.segmentEvents.filter(e => {
-        const app = (e.data?.app || '').toLowerCase();
-        const title = (e.data?.title || '').toLowerCase();
-        return app.includes(q) || title.includes(q);
-      });
-    },
-
-    trackedTime(): string {
-      const total = this.activityStore.active?.duration || 0;
+    totalTrackedTime(): string {
+      const total = (this.activeWindowEvents as any[]).reduce(
+        (sum: number, e: any) => sum + (e.duration || 0), 0
+      );
       return formatDuration(total);
     },
 
-    mostUsed(): { name: string; time: string; color: string }[] {
-      const topApps = this.activityStore.window?.top_apps || [];
-      return topApps.slice(0, 8).map(e => ({
-        name: e.data?.app || 'Unknown',
-        time: formatDuration(e.duration),
-        color: getColorFromString(e.data?.app || ''),
-      }));
+    // ─── ACTIVITIES TREE ─────────────────────────────────────────────
+    // Builds category → app → title hierarchy from AFK-filtered events
+    activitiesTree(): any[] {
+      const events: any[] = this.activeWindowEvents;
+      const categories: any[] = (this.categoryStore as any).classes;
+
+      // Pre-compile regexes once
+      const regexes: [any, RegExp][] = categories
+        .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
+        .map((c: any) => [c, new RegExp(c.rule.regex, (c.rule.ignore_case ? 'i' : '') + 'm')]);
+
+      const catMap: Record<string, any> = {};
+
+      for (const e of events) {
+        const app: string = e.data?.app || 'Unknown';
+        const rawTitle: string = e.data?.title || '';
+        const title: string = this.cleanTitle(rawTitle, app);
+        const dur: number = e.duration || 0;
+
+        // Classify: app name + raw title
+        const str = app + '\n' + rawTitle;
+        const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
+        const catName: string[] = matches.length > 0
+          ? (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name
+          : ['Uncategorized'];
+        const catKey = catName.join('>');
+
+        if (!catMap[catKey]) {
+          catMap[catKey] = {
+            catKey,
+            catLabel: catName[catName.length - 1],
+            category: catName,
+            color: (this.categoryStore as any).get_category_color(catName),
+            duration: 0,
+            apps: {},
+          };
+        }
+        catMap[catKey].duration += dur;
+
+        if (!catMap[catKey].apps[app]) {
+          catMap[catKey].apps[app] = {
+            app,
+            color: getColorFromString(app),
+            duration: 0,
+            titles: {} as Record<string, number>,
+          };
+        }
+        catMap[catKey].apps[app].duration += dur;
+        catMap[catKey].apps[app].titles[title] =
+          (catMap[catKey].apps[app].titles[title] || 0) + dur;
+      }
+
+      return Object.values(catMap)
+        .sort((a: any, b: any) => b.duration - a.duration)
+        .map((cat: any) => ({
+          ...cat,
+          apps: Object.values(cat.apps)
+            .sort((a: any, b: any) => b.duration - a.duration)
+            .map((app: any) => ({
+              ...app,
+              titles: Object.entries(app.titles as Record<string, number>)
+                .sort(([, a], [, b]) => (b as number) - (a as number))
+                .map(([title, dur]) => ({ title, duration: dur })),
+            })),
+        }));
     },
 
-    productivityBars(): { height: number; color: string }[] {
-      const cats = this.activityStore.category?.top || [];
-      if (!cats.length) return [];
-      const maxDur = Math.max(...cats.map(c => c.duration), 1);
-      return cats.slice(0, 8).map(c => ({
-        height: Math.max(5, (c.duration / maxDur) * 100),
-        color: c.data?.$color || '#4b8bff',
-      }));
+    filteredActivitiesTree(): any[] {
+      let tree: any[] = this.activitiesTree;
+
+      if (this.selectedCatFilter === '__unassigned__') {
+        tree = tree.filter((n: any) => n.category[0] === 'Uncategorized');
+      } else if (this.selectedCatFilter) {
+        const f = this.selectedCatFilter;
+        tree = tree.filter((n: any) => n.catKey === f || n.catKey.startsWith(f + '>'));
+      }
+
+      if (this.searchQuery) {
+        const q = this.searchQuery.toLowerCase();
+        tree = tree
+          .map((cat: any) => ({
+            ...cat,
+            apps: cat.apps
+              .map((a: any) => ({
+                ...a,
+                titles: a.titles.filter(
+                  (t: any) =>
+                    a.app.toLowerCase().includes(q) || t.title.toLowerCase().includes(q)
+                ),
+              }))
+              .filter(
+                (a: any) =>
+                  a.app.toLowerCase().includes(q) || a.titles.length > 0
+              ),
+          }))
+          .filter((cat: any) => cat.apps.length > 0);
+      }
+
+      return tree;
     },
 
-    // Build timeline blocks from events, merging nearby events for the same app
+    // Duration per category key (including parent accumulation)
+    categoryDurations(): Record<string, number> {
+      const result: Record<string, number> = {};
+      for (const node of this.activitiesTree as any[]) {
+        const name: string[] = node.category;
+        for (let i = 1; i <= name.length; i++) {
+          const key = name.slice(0, i).join('>');
+          result[key] = (result[key] || 0) + node.duration;
+        }
+      }
+      return result;
+    },
+
+    unassignedTime(): string {
+      const uncat = (this.activitiesTree as any[]).find(
+        (n: any) => n.category[0] === 'Uncategorized'
+      );
+      return uncat ? formatDuration(uncat.duration) : '';
+    },
+
+    // Flat sidebar tree respecting expand/collapse state
+    sidebarFlatTree(): any[] {
+      const rows: any[] = [];
+      const durations: Record<string, number> = this.categoryDurations;
+      const expanded: Record<string, boolean> = this.sidebarExpanded;
+      const catStore = this.categoryStore as any;
+
+      const flatten = (cats: any[], depth: number) => {
+        for (const cat of cats) {
+          const key: string = cat.name.join('>');
+          const dur = durations[key] || 0;
+          rows.push({
+            key,
+            label: cat.name[cat.name.length - 1],
+            depth,
+            color: catStore.get_category_color(cat.name),
+            hasChildren: cat.children && cat.children.length > 0,
+            time: dur > 0 ? formatDuration(dur) : '',
+          });
+          if (expanded[key] && cat.children && cat.children.length > 0) {
+            flatten(cat.children, depth + 1);
+          }
+        }
+      };
+
+      flatten(catStore.classes_hierarchy, 0);
+      return rows;
+    },
+
+    // Timeline: merge consecutive same-app events, full day
     timeline(): any[] {
-      const events = this.filteredEvents;
+      const events: any[] = this.activeWindowEvents;
       if (!events.length) return [];
 
-      // Sort by timestamp
-      const sorted = [...events].sort(
-        (a, b) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf()
+      // Apply search filter to timeline too
+      let filtered = events;
+      if (this.searchQuery) {
+        const q = this.searchQuery.toLowerCase();
+        filtered = events.filter((e: any) => {
+          return (e.data?.app || '').toLowerCase().includes(q) ||
+            (e.data?.title || '').toLowerCase().includes(q);
+        });
+      }
+
+      const sorted = [...filtered].sort(
+        (a: any, b: any) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf()
       );
 
-      // Pass 1: Merge consecutive events for the same app (any gap)
+      // Pass 1: merge consecutive same-app events
       const merged1: any[] = [];
       let current: any = null;
-
       for (const e of sorted) {
-        const app = e.data?.app || 'Unknown';
-
+        const app: string = e.data?.app || 'Unknown';
         if (current && current.app === app) {
-          // Always merge consecutive same-app events
           const eEnd = moment(e.timestamp).add(e.duration, 'seconds');
-          if (eEnd.isAfter(current.end)) {
-            current.end = eEnd;
-          }
+          if (eEnd.isAfter(current.end)) current.end = eEnd;
           current.duration += e.duration;
           continue;
         }
-
         if (current) merged1.push(current);
         current = {
           app,
@@ -356,25 +457,19 @@ export default {
       }
       if (current) merged1.push(current);
 
-      // Pass 2: Absorb short blocks (<30s) into surrounding blocks of the same app
+      // Pass 2: absorb very short interruptions
       const blocks: any[] = [];
       for (let i = 0; i < merged1.length; i++) {
         const b = merged1[i];
         const prev = blocks.length > 0 ? blocks[blocks.length - 1] : null;
-
-        // If this is a very short block and next/prev is same app, absorb it
         if (b.duration < 30 && prev && prev.app !== b.app) {
-          // Check if next block is same app as prev
           const next = i + 1 < merged1.length ? merged1[i + 1] : null;
           if (next && next.app === prev.app) {
-            // Absorb this short block into prev, then next will merge with prev
             prev.end = b.end;
             prev.duration += b.duration;
             continue;
           }
         }
-
-        // Merge with prev if same app
         if (prev && prev.app === b.app) {
           prev.end = b.end;
           prev.duration += b.duration;
@@ -383,20 +478,15 @@ export default {
         }
       }
 
-      // Build display objects, filtering out short blocks
       const appIndexMap: Record<string, number> = {};
       let idx = 0;
-
       return blocks
-        .filter(b => b.duration >= 60) // skip blocks shorter than 1 minute
-        .map(b => {
-          if (!(b.app in appIndexMap)) {
-            appIndexMap[b.app] = idx++;
-          }
+        .filter((b: any) => b.duration >= 60)
+        .map((b: any) => {
+          if (!(b.app in appIndexMap)) appIndexMap[b.app] = idx++;
           return {
             label: b.app,
-            range: formatHHMM(b.start.toISOString()) + ' - ' + formatHHMM(b.end.toISOString()),
-            tag: '',
+            range: formatHHMM(b.start.toISOString()) + ' – ' + formatHHMM(b.end.toISOString()),
             color: gradientForApp(b.app, appIndexMap[b.app]),
             height: Math.max(36, Math.min(180, b.duration / 15)),
             event: b.event,
@@ -406,15 +496,11 @@ export default {
 
     timelineWithMarkers(): any[] {
       if (!this.timeline.length) return [];
-
       const result: any[] = [];
       let lastHour = -1;
-
-      for (const block of this.timeline) {
-        // Extract hour from the range start
-        const hourStr = block.range.split(' - ')[0];
+      for (const block of this.timeline as any[]) {
+        const hourStr = block.range.split(' – ')[0];
         const hour = parseInt(hourStr.split(':')[0]);
-
         if (hour !== lastHour) {
           result.push({ type: 'time', label: hourStr });
           lastHour = hour;
@@ -424,75 +510,91 @@ export default {
       return result;
     },
 
-    recent(): any[] {
-      const events = this.filteredEvents;
+    // Flat chronological event list for the chrono view
+    chronoEvents(): any[] {
+      const events: any[] = this.activeWindowEvents;
       if (!events.length) return [];
 
-      // Most recent events first
-      const sorted = [...events]
-        .sort((a, b) => moment(b.timestamp).valueOf() - moment(a.timestamp).valueOf())
-        .slice(0, 10);
-
-      // Deduplicate by app, keeping the most recent
-      const seen = new Set<string>();
-      const deduped: any[] = [];
-      for (const e of sorted) {
-        const app = e.data?.app || 'Unknown';
-        if (seen.has(app)) continue;
-        seen.add(app);
-        deduped.push(e);
-        if (deduped.length >= 5) break;
+      let filtered = events;
+      if (this.searchQuery) {
+        const q = this.searchQuery.toLowerCase();
+        filtered = events.filter((e: any) =>
+          (e.data?.app || '').toLowerCase().includes(q) ||
+          (e.data?.title || '').toLowerCase().includes(q)
+        );
       }
 
-      return deduped.map(e => {
-        const app = e.data?.app || 'Unknown';
-        const start = moment(e.timestamp);
-        const end = moment(e.timestamp).add(e.duration, 'seconds');
-        return {
-          app,
-          time: formatHHMM(start.toISOString()) + ' - ' + formatHHMM(end.toISOString()),
-          dur: formatDuration(e.duration),
-          color: getColorFromString(app),
-          event: e,
-        };
-      });
-    },
+      const categories: any[] = (this.categoryStore as any).classes;
+      const regexes: [any, RegExp][] = categories
+        .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
+        .map((c: any) => [c, new RegExp(c.rule.regex, (c.rule.ignore_case ? 'i' : '') + 'm')]);
 
-    selectedDetail(): any {
-      if (this.selectedEventIndex === null) {
-        // Show most recent event by default
-        const events = this.filteredEvents;
-        if (!events.length) return null;
-        const latest = [...events].sort(
-          (a, b) => moment(b.timestamp).valueOf() - moment(a.timestamp).valueOf()
-        )[0];
-        return this.buildDetail(latest);
-      }
-      return this.buildDetail(this.selectedEventIndex);
+      return [...filtered]
+        .sort((a: any, b: any) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf())
+        .filter((e: any) => (e.duration || 0) >= 5)
+        .map((e: any) => {
+          const app: string = e.data?.app || 'Unknown';
+          const rawTitle: string = e.data?.title || '';
+          const str = app + '\n' + rawTitle;
+          const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
+          const catName: string[] = matches.length > 0
+            ? (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name
+            : ['Uncategorized'];
+          return {
+            ts: e.timestamp,
+            app,
+            title: this.cleanTitle(rawTitle, app),
+            timeStr: formatHHMM(e.timestamp),
+            duration: e.duration,
+            catColor: (this.categoryStore as any).get_category_color(catName),
+            appColor: getColorFromString(app),
+          };
+        });
     },
   },
 
   methods: {
-    buildDetail(event: any): any {
-      if (!event) return null;
-      const app = event.data?.app || 'Unknown';
-      const cat = event.data?.$category;
-      const catLabel = cat && cat.length > 0 ? cat.join(' > ') : '';
-      const isToday = moment(event.timestamp).isSame(moment(), 'day');
-
-      return {
-        name: app,
-        status: isToday ? 'Today' : moment(event.timestamp).format('MMM D'),
-        isActive: isToday && moment(event.timestamp).add(event.duration, 'seconds').isAfter(moment().subtract(5, 'minutes')),
-        duration: formatDuration(event.duration),
-        startTime: formatHHMM(event.timestamp),
-        category: catLabel,
-        color: getColorFromString(app),
-      };
+    // Expose module-level helpers to the template
+    formatDuration(seconds: number): string {
+      return formatDuration(seconds);
+    },
+    formatHHMM(ts: any): string {
+      return formatHHMM(ts);
     },
 
-    selectEvent(event: any) {
-      this.selectedEventIndex = event;
+    // Strip browser name suffix from window titles for better readability
+    cleanTitle(title: string, app: string): string {
+      if (!title) return app;
+      for (const b of BROWSER_SUFFIXES) {
+        const suffix = ' - ' + b;
+        if (title.endsWith(suffix)) {
+          return title.slice(0, title.length - suffix.length);
+        }
+      }
+      return title;
+    },
+
+    toggleExpandCat(key: string) {
+      this.$set(this.expandedCats, key, !this.expandedCats[key]);
+    },
+
+    toggleExpandApp(key: string) {
+      this.$set(this.expandedApps, key, !this.expandedApps[key]);
+    },
+
+    toggleSidebarNode(key: string) {
+      this.$set(this.sidebarExpanded, key, !this.sidebarExpanded[key]);
+    },
+
+    createTopCategory() {
+      const name = window.prompt('New project name:');
+      if (!name || !name.trim()) return;
+      (this.categoryStore as any).addClass({
+        name: [name.trim()],
+        rule: { type: 'none' },
+        data: { color: '#4b8bff' },
+      });
+      (this.categoryStore as any).save();
     },
 
     prevDay() {
@@ -517,7 +619,6 @@ export default {
       const settingsStore = this.settingsStore;
       const timeperiod = dateToTimeperiod(this.selectedDate, settingsStore.startOfDay);
 
-      // Fetch aggregated data first (top apps, categories, duration)
       await this.activityStore.ensure_loaded({
         timeperiod,
         host: this.host,
@@ -528,14 +629,12 @@ export default {
         always_active_pattern: settingsStore.always_active_pattern,
       });
 
-      // Then fetch raw window + AFK events for the timeline
       const windowBuckets = this.bucketsStore.bucketsWindow(this.host);
       const afkBuckets = this.bucketsStore.bucketsAFK(this.host);
       const startDate = moment(this.selectedDate).startOf('day').toDate();
       const endDate = moment(this.selectedDate).endOf('day').toDate();
       const params = { start: startDate, end: endDate, limit: -1 };
 
-      // These can run in parallel since ensure_loaded is done
       const [windowEvts, afkEvts] = await Promise.all([
         windowBuckets.length > 0
           ? getClient().getEvents(windowBuckets[0], params)
@@ -549,14 +648,6 @@ export default {
       this.afkEvents = afkEvts || [];
       this.loading = false;
     },
-
-    detectSegment() {
-      const hour = moment().hour();
-      if (hour >= 6 && hour < 12) this.activeSegment = 'morning';
-      else if (hour >= 12 && hour < 17) this.activeSegment = 'afternoon';
-      else if (hour >= 17 && hour < 21) this.activeSegment = 'evening';
-      else this.activeSegment = 'night';
-    },
   },
 
   watch: {
@@ -568,11 +659,9 @@ export default {
   async mounted() {
     const settingsStore = this.settingsStore;
     await settingsStore.ensureLoaded();
-
     this.selectedDate = get_today_with_offset(settingsStore.startOfDay);
-    this.detectSegment();
-
     await this.bucketsStore.ensureLoaded();
+    await (this.categoryStore as any).load();
     if (this.host) {
       await this.refresh();
     } else {
@@ -590,23 +679,26 @@ export default {
   --text: #e9eefb;
   --muted: #9aa4b2;
   --border: rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(255, 255, 255, 0.15);
   --glow: 0 20px 60px rgba(0, 0, 0, 0.45);
   color: var(--text);
   background: radial-gradient(1200px 700px at 10% -10%, rgba(80, 120, 255, 0.12), transparent 60%),
               radial-gradient(900px 700px at 90% 10%, rgba(255, 110, 70, 0.12), transparent 55%),
               var(--bg);
-  border-radius: 16px;
-  padding: 20px;
   font-family: system-ui, -apple-system, sans-serif;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
+/* ── TOPBAR ──────────────────────────────────────────────────────── */
 .chronio-topbar {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 16px;
+  display: flex;
   align-items: center;
-  margin-bottom: 18px;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .chronio-brand {
@@ -614,28 +706,28 @@ export default {
   align-items: center;
   gap: 10px;
   font-weight: 700;
+  font-size: 15px;
   letter-spacing: 0.4px;
 }
 
 .chronio-logo {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   border: 2px solid #4b8bff;
   box-shadow: 0 0 0 4px rgba(75, 139, 255, 0.15);
 }
 
-.chronio-controls {
-  display: grid;
-  grid-template-columns: auto auto 1fr auto auto;
-  gap: 12px;
+.chronio-topbar-right {
+  display: flex;
   align-items: center;
+  gap: 16px;
 }
 
 .chronio-date-nav {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .chronio-nav-btn {
@@ -647,12 +739,13 @@ export default {
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
-  &:hover { color: #fff; border-color: rgba(255,255,255,0.2); }
+  transition: color 0.15s, border-color 0.15s;
+  &:hover { color: #fff; border-color: var(--border-hover); }
   &:disabled { opacity: 0.3; cursor: not-allowed; }
 }
 
 .chronio-chip {
-  padding: 6px 12px;
+  padding: 5px 12px;
   border-radius: 10px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -660,6 +753,7 @@ export default {
   color: var(--muted);
   cursor: pointer;
   position: relative;
+  white-space: nowrap;
 }
 
 .date-input {
@@ -676,92 +770,350 @@ export default {
   font-size: 12px;
 }
 
-.chronio-seg {
-  display: inline-flex;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-.chronio-seg button {
-  background: transparent;
-  border: 0;
-  color: var(--muted);
-  padding: 6px 12px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.chronio-seg button.is-active {
-  background: rgba(75, 139, 255, 0.2);
-  color: var(--text);
-}
-
-.chronio-slider {
-  position: relative;
-  height: 8px;
-}
-
-.chronio-slider .track {
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  position: absolute;
-  top: 2px;
-  left: 0;
-  right: 0;
-}
-
-.chronio-slider .thumb {
-  position: absolute;
-  top: -2px;
-  width: 12px;
-  height: 12px;
-  background: #4b8bff;
-  border-radius: 50%;
-  box-shadow: 0 0 0 4px rgba(75, 139, 255, 0.2);
-  transition: left 0.3s ease;
-}
-
 .chronio-metric {
   display: inline-flex;
   gap: 6px;
   font-size: 12px;
   color: var(--muted);
-}
-
-.chronio-metric .value {
-  color: var(--text);
-  font-weight: 600;
+  white-space: nowrap;
+  .value { color: var(--text); font-weight: 600; }
 }
 
 .chronio-search {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 12px;
+  padding: 5px 10px;
+  border-radius: 10px;
   background: var(--panel);
   border: 1px solid var(--border);
+  input {
+    background: transparent;
+    border: 0;
+    color: var(--text);
+    outline: none;
+    font-size: 12px;
+    width: 160px;
+    &::placeholder { color: var(--muted); }
+  }
 }
 
-.chronio-search input {
-  background: transparent;
-  border: 0;
-  color: var(--text);
-  outline: none;
-  font-size: 12px;
-  width: 140px;
-}
-
+/* ── LOADING ─────────────────────────────────────────────────────── */
 .chronio-loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 60px 0;
+  flex: 1;
   color: var(--muted);
   font-size: 14px;
+}
+
+/* ── BODY: 3-COLUMN LAYOUT ───────────────────────────────────────── */
+.chronio-body {
+  display: grid;
+  grid-template-columns: 240px 1fr 280px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── SIDEBAR ─────────────────────────────────────────────────────── */
+.chronio-sidebar {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: rgba(15, 17, 23, 0.6);
+}
+
+.sidebar-nav {
+  padding: 12px 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-nav-item {
+  padding: 7px 16px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 0;
+  &:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+  &.active { color: #4b8bff; background: rgba(75,139,255,0.08); font-weight: 500; }
+}
+
+.sidebar-tree {
+  padding: 8px 0;
+  flex: 1;
+}
+
+.sidebar-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 6px;
+  margin: 1px 6px;
+  &:hover { background: rgba(255,255,255,0.05); }
+  &.active { background: rgba(75,139,255,0.12); color: #7db0ff; }
+  .sr-name { font-weight: 500; }
+  .sr-time { color: var(--muted); font-size: 12px; }
+}
+
+.sidebar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 12px;
+}
+
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+
+.sidebar-add-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  &:hover { color: var(--text); border-color: var(--border-hover); }
+}
+
+.sidebar-cat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 6px;
+  margin: 1px 6px;
+  &:hover { background: rgba(255,255,255,0.05); }
+  &.active { background: rgba(75,139,255,0.12); color: #7db0ff; }
+  .sr-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sr-time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+}
+
+.sr-expand-btn {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0;
+  width: 14px;
+  flex-shrink: 0;
+  &:hover { color: var(--text); }
+}
+
+.sr-expand-spacer {
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.sr-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── CENTER ──────────────────────────────────────────────────────── */
+.chronio-center {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.center-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.center-title {
+  font-size: 14px;
+  color: var(--muted);
+  strong { color: var(--text); }
+}
+
+.view-toggle {
+  display: inline-flex;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  button {
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    padding: 4px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    &.active { background: rgba(75,139,255,0.2); color: var(--text); }
+    &:hover:not(.active) { color: var(--text); }
+  }
+}
+
+.activities-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.act-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 20px 16px;
+}
+
+/* ── ACTIVITY ROWS ───────────────────────────────────────────────── */
+.act-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  min-height: 34px;
+  cursor: pointer;
+  &:hover { background: rgba(255,255,255,0.04); }
+  .act-name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .act-dur { font-size: 12px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+}
+
+.act-row--cat {
+  font-weight: 500;
+  .act-expand { font-size: 10px; color: var(--muted); width: 12px; flex-shrink: 0; }
+}
+
+.act-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.act-row--app {
+  .act-name { color: var(--muted); font-weight: 400; }
+}
+
+.act-indent {
+  width: 20px;
+  flex-shrink: 0;
+}
+
+.act-indent2 {
+  width: 36px;
+  flex-shrink: 0;
+}
+
+.act-app-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.act-row--title {
+  cursor: default;
+  &:hover { background: rgba(255,255,255,0.02); }
+  .act-title {
+    flex: 1;
+    font-size: 12px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.act-row--chrono {
+  gap: 8px;
+  cursor: default;
+  .act-app { font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .act-title { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .act-time { font-size: 11px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+}
+
+/* ── RIGHT TIMELINE ──────────────────────────────────────────────── */
+.chronio-timeline-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: rgba(15, 17, 23, 0.4);
+}
+
+.timeline-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tl-time {
+  font-size: 10px;
+  color: var(--muted);
+  padding: 4px 0 2px;
+  letter-spacing: 0.4px;
+}
+
+.tl-block {
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: #fff;
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  flex-shrink: 0;
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+}
+
+.tl-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+
+.tl-title {
+  font-weight: 600;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.tl-time-range {
+  font-size: 10px;
+  opacity: 0.85;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .chronio-empty {
@@ -770,265 +1122,14 @@ export default {
   padding: 12px 0;
 }
 
-.chronio-grid {
-  display: grid;
-  grid-template-columns: 1fr 1.4fr 1fr;
-  gap: 16px;
-}
-
-.chronio-col {
-  display: grid;
-  gap: 16px;
-  align-content: start;
-}
-
-.chronio-section {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.chronio-section.inline {
-  margin-top: 4px;
-}
-
-.chronio-section-title {
-  font-size: 12px;
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.chronio-tabs {
-  display: inline-flex;
-  gap: 6px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  padding: 4px;
-  border-radius: 12px;
-}
-
-.chronio-tabs button {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-  padding: 4px 10px;
-  cursor: pointer;
-}
-
-.chronio-tabs button.is-active {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text);
-  border-radius: 8px;
-}
-
-.chronio-card {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 16px;
-  box-shadow: var(--glow);
-}
-
-.chronio-card.detail {
-  padding: 18px;
-}
-
-.chronio-card-title {
-  font-size: 14px;
-  margin-bottom: 12px;
-}
-
-.chronio-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 10px;
-}
-
-.chronio-list li {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 10px;
-  align-items: center;
-  font-size: 13px;
-}
-
-.chronio-list .time {
-  color: var(--muted);
-}
-
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.chronio-bars {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(20px, 1fr));
-  gap: 6px;
-  align-items: end;
-  height: 80px;
-}
-
-.chronio-bars .bar {
-  background: linear-gradient(180deg, #4b8bff, rgba(75, 139, 255, 0.2));
-  border-radius: 6px;
-  min-height: 4px;
-}
-
-.chronio-timeline {
-  display: grid;
-  gap: 6px;
-  position: relative;
-  max-height: 70vh;
-  overflow-y: auto;
-}
-
-.chronio-time {
-  font-size: 11px;
-  color: var(--muted);
-  padding-top: 4px;
-}
-
-.chronio-block {
-  border-radius: 14px;
-  padding: 10px 14px;
-  color: #fff;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
-}
-
-.chronio-block:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-}
-
-.chronio-block .block-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.chronio-block .title {
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.chronio-block .time {
-  font-size: 11px;
-  opacity: 0.85;
-}
-
-.chronio-block .tag {
-  font-size: 11px;
-  opacity: 0.8;
-  margin-top: 4px;
-}
-
-.detail-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.app {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.app-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-}
-
-.app-meta .name {
-  font-weight: 600;
-}
-
-.app-meta .status {
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.status-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #26d07c;
-  box-shadow: 0 0 0 4px rgba(38, 208, 124, 0.2);
-}
-
-.detail-time {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 28px;
-  margin: 6px 0 2px;
-}
-
-.detail-sub {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.detail-pill {
-  margin-top: 10px;
-  display: inline-flex;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(75, 139, 255, 0.15);
-  color: #7db0ff;
-  font-size: 11px;
-}
-
-.chronio-table {
-  width: 100%;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.chronio-table th {
-  font-weight: 600;
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.8px;
-  color: var(--muted);
-  padding-bottom: 8px;
-}
-
-.chronio-table td {
-  padding: 6px 0;
-  color: var(--text);
-}
-
-.chronio-table td .dot {
-  margin-right: 6px;
-}
-
-.chronio-table tr:hover td {
-  color: #fff;
-}
-
-.view-all {
-  color: #7db0ff;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-@media (max-width: 1200px) {
-  .chronio-grid {
-    grid-template-columns: 1fr;
-  }
-  .chronio-controls {
-    grid-template-columns: 1fr;
-  }
-  .chronio-search input {
-    width: 100%;
-  }
+/* ── SCROLLBAR STYLING ───────────────────────────────────────────── */
+.chronio-sidebar,
+.activities-scroll,
+.timeline-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-track { background: transparent; }
+  &::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
 }
 </style>
