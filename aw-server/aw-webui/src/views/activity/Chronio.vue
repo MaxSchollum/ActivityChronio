@@ -135,10 +135,22 @@ div.chronio-view
             :key="'b-' + item.label + item.range"
             :style="{background: item.color, minHeight: item.height + 'px'}"
             @click="selectedEvent = item.event"
+            @mouseenter="showTooltip(item, $event)"
+            @mouseleave="hideTooltip"
           )
             .tl-block-header
               .tl-title {{ item.label }}
               .tl-time-range {{ item.range }}
+        .tl-now-line(v-if="nowLinePosition.show" :style="{top: nowLinePosition.top}")
+          span.tl-now-label {{ nowLinePosition.label }}
+      .tl-tooltip(
+        v-if="tooltip"
+        :style="{left: tooltip.x + 12 + 'px', top: tooltip.y - 10 + 'px'}"
+      )
+        .tl-tooltip-app {{ tooltip.app }}
+        .tl-tooltip-title {{ tooltip.title }}
+        .tl-tooltip-cat {{ tooltip.category }}
+        .tl-tooltip-meta {{ tooltip.range }} &middot; {{ tooltip.duration }}
 </template>
 
 <script lang="ts">
@@ -163,6 +175,9 @@ const GRADIENTS: string[] = [
   'linear-gradient(135deg, #0ea5e9, #38bdf8)',
   'linear-gradient(135deg, #f59e0b, #fbbf24)',
 ];
+
+// System processes to always filter out (exact app name match)
+const SYSTEM_PROCESSES = ['loginwindow', 'ScreenSaverEngine'];
 
 // Browser names to strip from window titles
 const BROWSER_SUFFIXES = [
@@ -205,6 +220,11 @@ export default {
       sidebarExpanded: {} as Record<string, boolean>,
       selectedCatFilter: null as string | null,
       viewMode: 'unified' as 'unified' | 'chrono',
+      // Tooltip state
+      tooltip: null as { app: string; title: string; category: string; range: string; duration: string; x: number; y: number } | null,
+      // Live refresh state
+      _refreshInterval: null as any,
+      nowMinute: 0 as number,
     };
   },
 
@@ -249,6 +269,10 @@ export default {
       const events = this.windowEvents || [];
       const intervals = this.notAfkIntervals;
       return events.filter((e: any) => {
+        // Filter out system processes by exact app name match
+        const app = e.data?.app || '';
+        if (SYSTEM_PROCESSES.includes(app)) return false;
+
         const eStart = moment(e.timestamp).valueOf();
         const eEnd = eStart + e.duration * 1000;
         const totalNotAfk = intervals.reduce((sum: number, iv: any) => {
@@ -551,6 +575,20 @@ export default {
           };
         });
     },
+
+    // Now-line position for today's timeline
+    nowLinePosition(): { show: boolean; top: string; label: string } {
+      if (!this.isToday || !this.timeline.length) return { show: false, top: '0', label: '' };
+      // Access nowMinute to force reactivity updates
+      const _tick = this.nowMinute;
+      const now = moment();
+      const dayStart = 8;
+      const dayEnd = 22;
+      const currentHour = now.hours() + now.minutes() / 60;
+      if (currentHour < dayStart || currentHour > dayEnd) return { show: false, top: '0', label: '' };
+      const pct = ((currentHour - dayStart) / (dayEnd - dayStart)) * 100;
+      return { show: true, top: pct + '%', label: now.format('HH:mm') };
+    },
   },
 
   methods: {
@@ -576,14 +614,73 @@ export default {
 
     toggleExpandCat(key: string) {
       this.$set(this.expandedCats, key, !this.expandedCats[key]);
+      this._saveExpandState();
     },
 
     toggleExpandApp(key: string) {
       this.$set(this.expandedApps, key, !this.expandedApps[key]);
+      this._saveExpandState();
     },
 
     toggleSidebarNode(key: string) {
       this.$set(this.sidebarExpanded, key, !this.sidebarExpanded[key]);
+      this._saveExpandState();
+    },
+
+    _saveExpandState: _.debounce(function (this: any) {
+      try {
+        localStorage.setItem('chronio_expandedCats', JSON.stringify(this.expandedCats));
+        localStorage.setItem('chronio_expandedApps', JSON.stringify(this.expandedApps));
+        localStorage.setItem('chronio_sidebarExpanded', JSON.stringify(this.sidebarExpanded));
+      } catch (e) { /* localStorage full or unavailable */ }
+    }, 200),
+
+    // ─── TOOLTIP ──────────────────────────────────────────────────
+    showTooltip(item: any, event: MouseEvent) {
+      const e = item.event;
+      const app = e?.data?.app || item.label;
+      const title = e?.data?.title ? this.cleanTitle(e.data.title, app) : '';
+
+      // Find category
+      const categories: any[] = (this.categoryStore as any).classes;
+      const regexes = categories
+        .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
+        .map((c: any) => [c, new RegExp(c.rule.regex, (c.rule.ignore_case ? 'i' : '') + 'm')]);
+      const str = app + '\n' + (e?.data?.title || '');
+      const matches = regexes.filter(([, re]: any) => re.test(str));
+      const catName = matches.length > 0
+        ? (_.maxBy(matches, ([c]: any) => c.name.length) as any)[0].name
+        : ['Uncategorized'];
+
+      this.tooltip = {
+        app,
+        title: title || '(no title)',
+        category: catName[catName.length - 1],
+        range: item.range,
+        duration: formatDuration(e?.duration || 0),
+        x: event.clientX,
+        y: event.clientY,
+      };
+    },
+    hideTooltip() {
+      this.tooltip = null;
+    },
+
+    // ─── LIVE REFRESH ───────────────────────────────────────────────
+    _startLiveRefresh() {
+      this._stopLiveRefresh();
+      if (!this.isToday) return;
+      this.nowMinute = Date.now();
+      this._refreshInterval = setInterval(() => {
+        this.nowMinute = Date.now();
+        this.refresh();
+      }, 60000);
+    },
+    _stopLiveRefresh() {
+      if (this._refreshInterval) {
+        clearInterval(this._refreshInterval);
+        this._refreshInterval = null;
+      }
     },
 
     createTopCategory() {
@@ -600,16 +697,19 @@ export default {
     prevDay() {
       this.selectedDate = moment(this.selectedDate).subtract(1, 'day').format('YYYY-MM-DD');
       this.refresh();
+      this._startLiveRefresh();
     },
     nextDay() {
       if (this.isToday) return;
       this.selectedDate = moment(this.selectedDate).add(1, 'day').format('YYYY-MM-DD');
       this.refresh();
+      this._startLiveRefresh();
     },
     onDateChange(dateStr: string) {
       this.selectedDate = dateStr;
       this.showDatePicker = false;
       this.refresh();
+      this._startLiveRefresh();
     },
 
     async refresh() {
@@ -657,6 +757,16 @@ export default {
   },
 
   async mounted() {
+    // Restore expand/collapse state from localStorage
+    try {
+      const cats = localStorage.getItem('chronio_expandedCats');
+      const apps = localStorage.getItem('chronio_expandedApps');
+      const sidebar = localStorage.getItem('chronio_sidebarExpanded');
+      if (cats) this.expandedCats = JSON.parse(cats);
+      if (apps) this.expandedApps = JSON.parse(apps);
+      if (sidebar) this.sidebarExpanded = JSON.parse(sidebar);
+    } catch (e) { /* ignore parse errors */ }
+
     const settingsStore = this.settingsStore;
     await settingsStore.ensureLoaded();
     this.selectedDate = get_today_with_offset(settingsStore.startOfDay);
@@ -667,6 +777,11 @@ export default {
     } else {
       this.loading = false;
     }
+    this._startLiveRefresh();
+  },
+
+  beforeDestroy() {
+    this._stopLiveRefresh();
   },
 };
 </script>
@@ -1071,6 +1186,7 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  position: relative;
 }
 
 .tl-time {
@@ -1120,6 +1236,68 @@ export default {
   color: var(--muted);
   font-size: 12px;
   padding: 12px 0;
+}
+
+/* ── NOW LINE ────────────────────────────────────────────────────── */
+.tl-now-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #ff4444;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.tl-now-label {
+  position: absolute;
+  top: -8px;
+  right: 4px;
+  font-size: 10px;
+  color: #ff4444;
+  font-weight: 600;
+}
+
+/* ── TOOLTIP ─────────────────────────────────────────────────────── */
+.tl-tooltip {
+  position: fixed;
+  z-index: 100;
+  background: rgba(15, 17, 23, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 8px 12px;
+  pointer-events: none;
+  max-width: 280px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.tl-tooltip-app {
+  font-weight: 600;
+  font-size: 12px;
+  color: #e9eefb;
+  margin-bottom: 2px;
+}
+
+.tl-tooltip-title {
+  font-size: 11px;
+  color: #9aa4b2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+
+.tl-tooltip-cat {
+  font-size: 10px;
+  color: #6b7a8d;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.tl-tooltip-meta {
+  font-size: 11px;
+  color: #9aa4b2;
 }
 
 /* ── SCROLLBAR STYLING ───────────────────────────────────────────── */
