@@ -1,5 +1,5 @@
 <template lang="pug">
-div.chronio-view
+div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
   .chronio-topbar
     .chronio-brand
       .chronio-logo
@@ -20,6 +20,9 @@ div.chronio-view
       .chronio-metric
         span.label Tracked:
         span.value {{ totalTrackedTime }}
+      .chronio-metric(v-if="productivityDisplay.show")
+        span.label Productivity:
+        span.value(:class="productivityDisplay.colorClass") {{ productivityDisplay.text }}
       .chronio-search
         input(type="text" placeholder="Search…" v-model="searchQuery")
 
@@ -53,22 +56,84 @@ div.chronio-view
 
         .sidebar-section-header
           span Private
-          button.sidebar-add-btn(@click.stop="createTopCategory") +
+          button.sidebar-add-btn(@click.stop="startInlineCreate(null)") +
+
+        //- Inline input for new top-level category
+        .sidebar-inline-input(v-if="inlineInput && inlineInput.mode === 'create' && !inlineInput.parentKey")
+          input.sidebar-inline-field(
+            ref="inlineFieldTop"
+            v-model="inlineInput.value"
+            @keydown.enter="confirmInlineInput"
+            @keydown.esc.stop="cancelInlineInput"
+            @blur="cancelInlineInput"
+            placeholder="Category name…"
+          )
 
         template(v-for="row in sidebarFlatTree" :key="row.key")
           .sidebar-cat-row(
             :style="{paddingLeft: (row.depth * 14 + 10) + 'px'}"
-            :class="{active: selectedCatFilter === row.key}"
+            :class="{active: selectedCatFilter === row.key, 'drop-target': dropTarget === row.key, 'drop-success': dropSuccess === row.key}"
             @click="selectedCatFilter = row.key"
+            @contextmenu.prevent="openContextMenu(row, $event)"
+            @dragover.prevent="onDragOver(row.key)"
+            @dragleave="onDragLeave(row.key)"
+            @drop.prevent="onDrop($event, row)"
           )
             button.sr-expand-btn(
               v-if="row.hasChildren"
               @click.stop="toggleSidebarNode(row.key)"
             ) {{ sidebarExpanded[row.key] ? '▾' : '▸' }}
             span.sr-expand-spacer(v-else)
-            .sr-dot(:style="{background: row.color}")
+            .sr-dot(
+              :style="{background: row.color}"
+              @click.stop="openColorPicker(row, $event)"
+            )
             span.sr-name {{ row.label }}
             span.sr-time {{ row.time }}
+          //- Inline input for sub-category or rename
+          .sidebar-inline-input(
+            v-if="inlineInput && inlineInput.parentKey === row.key && (inlineInput.mode === 'createSub' || inlineInput.mode === 'rename')"
+            :style="{paddingLeft: ((row.depth + (inlineInput.mode === 'createSub' ? 1 : 0)) * 14 + 10) + 'px'}"
+          )
+            input.sidebar-inline-field(
+              ref="inlineFieldNested"
+              v-model="inlineInput.value"
+              @keydown.enter="confirmInlineInput"
+              @keydown.esc.stop="cancelInlineInput"
+              @blur="cancelInlineInput"
+              placeholder="Name…"
+            )
+
+      //- Context menu
+      .ctx-menu(
+        v-if="contextMenu"
+        :style="{left: contextMenu.x + 'px', top: contextMenu.y + 'px'}"
+        @click.stop
+      )
+        .ctx-item(@click="ctxAddSub") Add subcategory
+        .ctx-item(@click="ctxRename") Rename
+        .ctx-item(@click="ctxSetScore(10)") {{ contextMenu.row && getCatScore(contextMenu.row.key) === 10 ? '✓ ' : '' }}Productive
+        .ctx-item(@click="ctxSetScore(0)") {{ contextMenu.row && getCatScore(contextMenu.row.key) === 0 ? '✓ ' : '' }}Neutral
+        .ctx-item(@click="ctxSetScore(-10)") {{ contextMenu.row && getCatScore(contextMenu.row.key) === -10 ? '✓ ' : '' }}Distracting
+        .ctx-divider
+        .ctx-item.ctx-danger(@click="ctxDelete") Delete
+
+      //- Color picker popover
+      .color-picker-popover(
+        v-if="colorPicker"
+        :style="{left: colorPicker.x + 'px', top: colorPicker.y + 'px'}"
+        @click.stop
+      )
+        .color-swatch(
+          v-for="c in presetColors"
+          :key="c"
+          :style="{background: c}"
+          :class="{active: c === colorPicker.currentColor}"
+          @click="pickColor(c)"
+        )
+        .color-custom
+          label Custom:
+          input.color-input(type="color" :value="colorPicker.currentColor || '#4b8bff'" @input="pickColor($event.target.value)")
 
     //- ─── CENTER: ALL ACTIVITIES ─────────────────────────────────────
     .chronio-center
@@ -96,6 +161,8 @@ div.chronio-view
 
             template(v-if="expandedCats[catNode.catKey]" v-for="appNode in catNode.apps" :key="catNode.catKey + '/' + appNode.app")
               .act-row.act-row--app(
+                draggable="true"
+                @dragstart="onDragStart($event, 'app', appNode.app)"
                 @click="toggleExpandApp(catNode.catKey + '/' + appNode.app)"
               )
                 .act-indent
@@ -104,7 +171,10 @@ div.chronio-view
                 span.act-dur {{ formatDuration(appNode.duration) }}
 
               template(v-if="expandedApps[catNode.catKey + '/' + appNode.app]" v-for="t in appNode.titles" :key="catNode.catKey + '/' + appNode.app + '/' + t.title")
-                .act-row.act-row--title
+                .act-row.act-row--title(
+                  draggable="true"
+                  @dragstart="onDragStart($event, 'title', t.rawTitle || t.title)"
+                )
                   .act-indent2
                   span.act-title(:title="t.title") {{ t.title }}
                   span.act-dur {{ formatDuration(t.duration) }}
@@ -151,6 +221,27 @@ div.chronio-view
         .tl-tooltip-title {{ tooltip.title }}
         .tl-tooltip-cat {{ tooltip.category }}
         .tl-tooltip-meta {{ tooltip.range }} &middot; {{ tooltip.duration }}
+
+    //- ─── ONBOARDING OVERLAY ─────────────────────────────────────────
+    .onboarding-overlay(v-if="showOnboarding" @click.self="dismissOnboarding")
+      .onboarding-card
+        .onboarding-step(v-if="onboardingStep === 0")
+          .onboarding-icon &#9201;
+          h2 Welcome to Chronio
+          p Your personal activity tracker. See exactly what you did and when — with automatic categorization and productivity scoring.
+        .onboarding-step(v-if="onboardingStep === 1")
+          .onboarding-icon &#8644;
+          h2 Drag to Categorize
+          p Drag apps or browser tabs from the center panel onto sidebar categories. Rules are saved automatically and persist across days.
+        .onboarding-step(v-if="onboardingStep === 2")
+          .onboarding-icon &#9889;
+          h2 Track Your Productivity
+          p Right-click categories to mark them as Productive, Neutral, or Distracting. Your productivity score updates in real time.
+        .onboarding-actions
+          button.onboarding-skip(@click="dismissOnboarding") Skip
+          .onboarding-dots
+            span.dot(v-for="i in 3" :key="i" :class="{active: onboardingStep === i - 1}")
+          button.onboarding-next(@click="nextOnboardingStep") {{ onboardingStep >= 2 ? 'Get Started' : 'Next' }}
 </template>
 
 <script lang="ts">
@@ -223,8 +314,20 @@ export default {
       // Tooltip state
       tooltip: null as { app: string; title: string; category: string; range: string; duration: string; x: number; y: number } | null,
       // Live refresh state
-      _refreshInterval: null as any,
+      refreshTimer: null as any,
       nowMinute: 0 as number,
+      // Context menu state
+      contextMenu: null as { x: number; y: number; row: any } | null,
+      // Inline input state (create, createSub, rename)
+      inlineInput: null as { mode: string; parentKey: string | null; value: string; catName?: string[] } | null,
+      // Drag-and-drop state
+      dropTarget: null as string | null,
+      dropSuccess: null as string | null,
+      // Color picker state
+      colorPicker: null as { x: number; y: number; row: any; currentColor: string } | null,
+      // Onboarding state
+      showOnboarding: false as boolean,
+      onboardingStep: 0 as number,
     };
   },
 
@@ -338,8 +441,10 @@ export default {
           };
         }
         catMap[catKey].apps[app].duration += dur;
-        catMap[catKey].apps[app].titles[title] =
-          (catMap[catKey].apps[app].titles[title] || 0) + dur;
+        if (!catMap[catKey].apps[app].titles[title]) {
+          catMap[catKey].apps[app].titles[title] = { duration: 0, rawTitle };
+        }
+        catMap[catKey].apps[app].titles[title].duration += dur;
       }
 
       return Object.values(catMap)
@@ -350,9 +455,9 @@ export default {
             .sort((a: any, b: any) => b.duration - a.duration)
             .map((app: any) => ({
               ...app,
-              titles: Object.entries(app.titles as Record<string, number>)
-                .sort(([, a], [, b]) => (b as number) - (a as number))
-                .map(([title, dur]) => ({ title, duration: dur })),
+              titles: Object.entries(app.titles as Record<string, { duration: number; rawTitle: string }>)
+                .sort(([, a], [, b]) => (b as any).duration - (a as any).duration)
+                .map(([title, info]) => ({ title, duration: (info as any).duration, rawTitle: (info as any).rawTitle })),
             })),
         }));
     },
@@ -502,16 +607,33 @@ export default {
         }
       }
 
-      const appIndexMap: Record<string, number> = {};
-      let idx = 0;
+      // Pre-compile category regexes for color lookup
+      const catStore = this.categoryStore as any;
+      const categories: any[] = catStore.classes;
+      const regexes: [any, RegExp][] = categories
+        .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
+        .map((c: any) => [c, new RegExp(c.rule.regex, (c.rule.ignore_case ? 'i' : '') + 'm')]);
+
       return blocks
         .filter((b: any) => b.duration >= 60)
         .map((b: any) => {
-          if (!(b.app in appIndexMap)) appIndexMap[b.app] = idx++;
+          // Classify block to get category color
+          const app = b.app || 'Unknown';
+          const title = b.event?.data?.title || '';
+          const str = app + '\n' + title;
+          const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
+          let color: string;
+          if (matches.length > 0) {
+            const catName: string[] = (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name;
+            const catColor: string = catStore.get_category_color(catName) || '#6b7a8d';
+            color = `linear-gradient(135deg, ${catColor}, ${catColor}dd)`;
+          } else {
+            color = 'linear-gradient(135deg, #6b7a8d, #6b7a8ddd)';
+          }
           return {
             label: b.app,
             range: formatHHMM(b.start.toISOString()) + ' – ' + formatHHMM(b.end.toISOString()),
-            color: gradientForApp(b.app, appIndexMap[b.app]),
+            color,
             height: Math.max(36, Math.min(180, b.duration / 15)),
             event: b.event,
           };
@@ -574,6 +696,44 @@ export default {
             appColor: getColorFromString(app),
           };
         });
+    },
+
+    // ─── PRODUCTIVITY SCORE ─────────────────────────────────────────
+    productivityDisplay(): { show: boolean; text: string; colorClass: string } {
+      const events: any[] = this.activeWindowEvents;
+      if (!events.length) return { show: false, text: '—', colorClass: '' };
+
+      const catStore = this.categoryStore as any;
+      const categories: any[] = catStore.classes;
+      const regexes: [any, RegExp][] = categories
+        .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
+        .map((c: any) => [c, new RegExp(c.rule.regex, (c.rule.ignore_case ? 'i' : '') + 'm')]);
+
+      let totalDur = 0;
+      let scoredDur = 0;
+
+      for (const e of events) {
+        const dur: number = e.duration || 0;
+        if (dur <= 0) continue;
+        totalDur += dur;
+
+        const app: string = e.data?.app || '';
+        const title: string = e.data?.title || '';
+        const str = app + '\n' + title;
+        const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
+        if (matches.length > 0) {
+          const catName: string[] = (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name;
+          const score: number = catStore.get_category_score(catName) || 0;
+          scoredDur += dur * score;
+        }
+      }
+
+      if (totalDur <= 0) return { show: false, text: '—', colorClass: '' };
+
+      const pct = Math.round((scoredDur / (totalDur * 10)) * 100);
+      const clamped = Math.max(0, Math.min(100, pct));
+      const colorClass = clamped >= 70 ? 'prod-green' : clamped >= 40 ? 'prod-yellow' : 'prod-red';
+      return { show: true, text: clamped + '%', colorClass };
     },
 
     // Now-line position for today's timeline
@@ -671,27 +831,233 @@ export default {
       this._stopLiveRefresh();
       if (!this.isToday) return;
       this.nowMinute = Date.now();
-      this._refreshInterval = setInterval(() => {
+      this.refreshTimer = setInterval(() => {
         this.nowMinute = Date.now();
         this.refresh();
       }, 60000);
     },
     _stopLiveRefresh() {
-      if (this._refreshInterval) {
-        clearInterval(this._refreshInterval);
-        this._refreshInterval = null;
+      if (this.refreshTimer) {
+        clearInterval(this.refreshTimer);
+        this.refreshTimer = null;
       }
     },
 
-    createTopCategory() {
-      const name = window.prompt('New project name:');
-      if (!name || !name.trim()) return;
-      (this.categoryStore as any).addClass({
-        name: [name.trim()],
-        rule: { type: 'none' },
-        data: { color: '#4b8bff' },
+    // ─── PRESET COLORS (for color picker) ────────────────────────────
+    get presetColors(): string[] {
+      return [
+        '#4b8bff', '#8a3bff', '#1db954', '#ff6a1f', '#ff4f9a',
+        '#0ea5e9', '#f59e0b', '#e6683c', '#6b7a8d', '#ef4444',
+        '#22c55e', '#a855f7', '#06b6d4', '#ec4899', '#84cc16',
+        '#f97316',
+      ];
+    },
+
+    // ─── INLINE CATEGORY CRUD ─────────────────────────────────────
+    startInlineCreate(parentKey: string | null) {
+      this.dismissContextMenu();
+      this.inlineInput = { mode: parentKey ? 'createSub' : 'create', parentKey, value: '' };
+      this.$nextTick(() => {
+        const ref = parentKey ? (this.$refs.inlineFieldNested as any) : (this.$refs.inlineFieldTop as any);
+        const el = Array.isArray(ref) ? ref[0] : ref;
+        if (el) el.focus();
       });
-      (this.categoryStore as any).save();
+    },
+
+    startInlineRename(row: any) {
+      this.dismissContextMenu();
+      this.inlineInput = { mode: 'rename', parentKey: row.key, value: row.label, catName: row.key.split('>') };
+      this.$nextTick(() => {
+        const ref = this.$refs.inlineFieldNested as any;
+        const el = Array.isArray(ref) ? ref[0] : ref;
+        if (el) { el.focus(); el.select(); }
+      });
+    },
+
+    confirmInlineInput() {
+      if (!this.inlineInput || !this.inlineInput.value.trim()) {
+        this.cancelInlineInput();
+        return;
+      }
+      const catStore = this.categoryStore as any;
+      const val = this.inlineInput.value.trim();
+
+      if (this.inlineInput.mode === 'create') {
+        catStore.addClass({ name: [val], rule: { type: 'none' }, data: { color: '#4b8bff' } });
+        catStore.save();
+      } else if (this.inlineInput.mode === 'createSub') {
+        const parentName = this.inlineInput.parentKey!.split('>');
+        catStore.addClass({ name: [...parentName, val], rule: { type: 'none' }, data: {} });
+        catStore.save();
+      } else if (this.inlineInput.mode === 'rename') {
+        const oldName = this.inlineInput.catName!;
+        const cat = catStore.get_category(oldName);
+        if (cat) {
+          const newName = [...oldName.slice(0, -1), val];
+          catStore.updateClass({ ...cat, name: newName });
+          catStore.save();
+        }
+      }
+      this.inlineInput = null;
+    },
+
+    cancelInlineInput() {
+      this.inlineInput = null;
+    },
+
+    // ─── CONTEXT MENU ─────────────────────────────────────────────
+    openContextMenu(row: any, event: MouseEvent) {
+      this.colorPicker = null;
+      this.contextMenu = { x: event.clientX, y: event.clientY, row };
+    },
+
+    dismissContextMenu() {
+      this.contextMenu = null;
+      this.colorPicker = null;
+    },
+
+    ctxAddSub() {
+      if (!this.contextMenu) return;
+      const row = this.contextMenu.row;
+      this.startInlineCreate(row.key);
+    },
+
+    ctxRename() {
+      if (!this.contextMenu) return;
+      const row = this.contextMenu.row;
+      this.startInlineRename(row);
+    },
+
+    ctxDelete() {
+      if (!this.contextMenu) return;
+      const row = this.contextMenu.row;
+      const catStore = this.categoryStore as any;
+      const catName = row.key.split('>');
+
+      // Check for children
+      if (row.hasChildren) {
+        if (!confirm(`Delete "${row.label}" and all its subcategories?`)) {
+          this.dismissContextMenu();
+          return;
+        }
+      }
+
+      const cat = catStore.get_category(catName);
+      if (cat) {
+        catStore.removeClass(cat.id);
+        // Also remove children
+        const prefix = row.key + '>';
+        const toRemove = catStore.classes.filter((c: any) => c.name.join('>').startsWith(prefix));
+        for (const child of toRemove) {
+          catStore.removeClass(child.id);
+        }
+        catStore.save();
+      }
+      this.dismissContextMenu();
+    },
+
+    // ─── PRODUCTIVITY SCORE (context menu) ────────────────────────
+    getCatScore(key: string): number {
+      const catStore = this.categoryStore as any;
+      const catName = key.split('>');
+      return catStore.get_category_score(catName) || 0;
+    },
+
+    ctxSetScore(score: number) {
+      if (!this.contextMenu) return;
+      const row = this.contextMenu.row;
+      const catStore = this.categoryStore as any;
+      const catName = row.key.split('>');
+      const cat = catStore.get_category(catName);
+      if (cat) {
+        catStore.updateClass({ ...cat, data: { ...cat.data, score } });
+        catStore.save();
+      }
+      this.dismissContextMenu();
+    },
+
+    // ─── COLOR PICKER ─────────────────────────────────────────────
+    openColorPicker(row: any, event: MouseEvent) {
+      this.contextMenu = null;
+      const catStore = this.categoryStore as any;
+      const catName = row.key.split('>');
+      this.colorPicker = {
+        x: event.clientX + 8,
+        y: event.clientY - 10,
+        row,
+        currentColor: catStore.get_category_color(catName) || '#4b8bff',
+      };
+    },
+
+    pickColor(color: string) {
+      if (!this.colorPicker) return;
+      const row = this.colorPicker.row;
+      const catStore = this.categoryStore as any;
+      const catName = row.key.split('>');
+      const cat = catStore.get_category(catName);
+      if (cat) {
+        catStore.updateClass({ ...cat, data: { ...cat.data, color } });
+        catStore.save();
+      }
+      this.colorPicker = null;
+    },
+
+    // ─── DRAG & DROP ──────────────────────────────────────────────
+    onDragStart(event: DragEvent, type: string, value: string) {
+      if (event.dataTransfer) {
+        event.dataTransfer.setData('text/plain', JSON.stringify({ type, value }));
+        event.dataTransfer.effectAllowed = 'copy';
+      }
+    },
+
+    onDragOver(key: string) {
+      this.dropTarget = key;
+    },
+
+    onDragLeave(key: string) {
+      if (this.dropTarget === key) this.dropTarget = null;
+    },
+
+    onDrop(event: DragEvent, row: any) {
+      this.dropTarget = null;
+      try {
+        const raw = event.dataTransfer?.getData('text/plain');
+        if (!raw) return;
+        const { type, value } = JSON.parse(raw);
+        if (!value) return;
+
+        // Escape special regex characters
+        const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = type === 'app' ? ('^' + escaped + '$') : escaped;
+
+        const catStore = this.categoryStore as any;
+        const catName = row.key.split('>');
+        const cat = catStore.get_category(catName);
+        if (cat) {
+          catStore.appendClassRule(cat.id, pattern);
+          catStore.save();
+
+          // Show brief success animation
+          this.dropSuccess = row.key;
+          setTimeout(() => { this.dropSuccess = null; }, 600);
+        }
+      } catch (e) {
+        // Silently ignore bad drag data
+      }
+    },
+
+    // ─── ONBOARDING ───────────────────────────────────────────────
+    dismissOnboarding() {
+      this.showOnboarding = false;
+      localStorage.setItem('chronio_onboarding_complete', 'true');
+    },
+
+    nextOnboardingStep() {
+      if (this.onboardingStep >= 2) {
+        this.dismissOnboarding();
+      } else {
+        this.onboardingStep++;
+      }
     },
 
     prevDay() {
@@ -757,6 +1123,11 @@ export default {
   },
 
   async mounted() {
+    // Check onboarding
+    if (!localStorage.getItem('chronio_onboarding_complete')) {
+      this.showOnboarding = true;
+    }
+
     // Restore expand/collapse state from localStorage
     try {
       const cats = localStorage.getItem('chronio_expandedCats');
@@ -1298,6 +1669,203 @@ export default {
 .tl-tooltip-meta {
   font-size: 11px;
   color: #9aa4b2;
+}
+
+/* ── PRODUCTIVITY COLORS ─────────────────────────────────────────── */
+.prod-green { color: #22c55e !important; }
+.prod-yellow { color: #f59e0b !important; }
+.prod-red { color: #ef4444 !important; }
+
+/* ── INLINE INPUT ───────────────────────────────────────────────── */
+.sidebar-inline-input {
+  padding: 3px 12px;
+}
+
+.sidebar-inline-field {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(75, 139, 255, 0.4);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 8px;
+  outline: none;
+  &:focus { border-color: #4b8bff; box-shadow: 0 0 0 2px rgba(75, 139, 255, 0.2); }
+}
+
+/* ── CONTEXT MENU ───────────────────────────────────────────────── */
+.ctx-menu {
+  position: fixed;
+  z-index: 200;
+  background: rgba(22, 26, 36, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 4px 0;
+  min-width: 160px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+.ctx-item {
+  padding: 7px 14px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  &:hover { background: rgba(75, 139, 255, 0.15); }
+}
+
+.ctx-danger { color: #ef4444; }
+.ctx-divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+/* ── COLOR PICKER ───────────────────────────────────────────────── */
+.color-picker-popover {
+  position: fixed;
+  z-index: 200;
+  background: rgba(22, 26, 36, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, 28px);
+  gap: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+.color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.15s, transform 0.1s;
+  &:hover { transform: scale(1.1); }
+  &.active { border-color: #fff; }
+}
+
+.color-custom {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  label { font-size: 11px; color: var(--muted); }
+  .color-input {
+    width: 32px;
+    height: 24px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    background: transparent;
+    padding: 0;
+  }
+}
+
+/* ── DRAG & DROP FEEDBACK ───────────────────────────────────────── */
+.drop-target {
+  background: rgba(75, 139, 255, 0.2) !important;
+  border: 1px dashed rgba(75, 139, 255, 0.5);
+}
+
+.drop-success {
+  background: rgba(34, 197, 94, 0.2) !important;
+  transition: background 0.3s ease;
+}
+
+.act-row--app[draggable="true"],
+.act-row--title[draggable="true"] {
+  cursor: grab;
+  &:active { cursor: grabbing; opacity: 0.6; }
+}
+
+.sr-dot {
+  cursor: pointer;
+  transition: transform 0.1s;
+  &:hover { transform: scale(1.4); }
+}
+
+/* ── ONBOARDING ─────────────────────────────────────────────────── */
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+
+.onboarding-card {
+  background: rgba(22, 26, 36, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 40px 48px;
+  max-width: 440px;
+  text-align: center;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+.onboarding-step {
+  h2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 12px 0 8px;
+  }
+  p {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.6;
+    margin: 0;
+  }
+}
+
+.onboarding-icon {
+  font-size: 36px;
+}
+
+.onboarding-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 28px;
+}
+
+.onboarding-skip {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 12px;
+  &:hover { color: var(--text); }
+}
+
+.onboarding-next {
+  background: #4b8bff;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  &:hover { background: #3a7aee; }
+}
+
+.onboarding-dots {
+  display: flex;
+  gap: 6px;
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2);
+    transition: background 0.2s;
+    &.active { background: #4b8bff; }
+  }
 }
 
 /* ── SCROLLBAR STYLING ───────────────────────────────────────────── */
