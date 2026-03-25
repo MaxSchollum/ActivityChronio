@@ -164,8 +164,10 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
                 draggable="true"
                 @dragstart="onDragStart($event, 'app', appNode.app)"
                 @click="toggleExpandApp(catNode.catKey + '/' + appNode.app)"
+                title="Drag to a category to assign"
               )
                 .act-indent
+                .act-drag-handle ⠿
                 .act-app-icon(:style="{background: appNode.color}")
                 span.act-name {{ appNode.app }}
                 span.act-dur {{ formatDuration(appNode.duration) }}
@@ -371,19 +373,41 @@ export default {
     activeWindowEvents(): any[] {
       const events = this.windowEvents || [];
       const intervals = this.notAfkIntervals;
-      return events.filter((e: any) => {
+      const result: any[] = [];
+      for (const e of events) {
         // Filter out system processes by exact app name match
         const app = e.data?.app || '';
-        if (SYSTEM_PROCESSES.includes(app)) return false;
+        if (SYSTEM_PROCESSES.includes(app)) continue;
 
         const eStart = moment(e.timestamp).valueOf();
         const eEnd = eStart + e.duration * 1000;
-        const totalNotAfk = intervals.reduce((sum: number, iv: any) => {
-          return sum + Math.max(0, Math.min(eEnd, iv.end) - Math.max(eStart, iv.start));
-        }, 0);
-        const eventDur = eEnd - eStart;
-        return totalNotAfk > 0 && totalNotAfk / eventDur > 0.1;
-      });
+
+        // Find all not-afk intervals that overlap this event
+        const overlaps = intervals
+          .map((iv: any) => ({
+            start: Math.max(eStart, iv.start),
+            end: Math.min(eEnd, iv.end),
+          }))
+          .filter((ov: any) => ov.end > ov.start);
+
+        if (!overlaps.length) continue;
+
+        const totalNotAfkMs = overlaps.reduce((sum: number, ov: any) => sum + (ov.end - ov.start), 0);
+        const eventDurMs = eEnd - eStart;
+        if (totalNotAfkMs / eventDurMs <= 0.1) continue;
+
+        // Clip: anchor event to its first real active moment and use only the
+        // not-afk overlap duration. This eliminates phantom blocks caused by
+        // stale watcher events with huge raw durations (e.g. overnight Chrome).
+        const clippedStart = overlaps[0].start;
+        const clippedDuration = totalNotAfkMs / 1000;
+        result.push(
+          clippedDuration < e.duration
+            ? { ...e, timestamp: new Date(clippedStart).toISOString(), duration: clippedDuration }
+            : e
+        );
+      }
+      return result;
     },
 
     totalTrackedTime(): string {
@@ -1113,6 +1137,19 @@ export default {
       this.windowEvents = windowEvts || [];
       this.afkEvents = afkEvts || [];
       this.loading = false;
+
+      // Auto-expand all categories if the user has no saved expand state yet.
+      // This makes draggable app rows immediately visible without requiring
+      // manual expansion first (fixes drag-to-categorize discoverability).
+      if (!localStorage.getItem('chronio_expandedCats')) {
+        this.$nextTick(() => {
+          const expanded: Record<string, boolean> = {};
+          for (const cat of (this as any).filteredActivitiesTree) {
+            expanded[cat.catKey] = true;
+          }
+          (this as any).expandedCats = expanded;
+        });
+      }
     },
   },
 
@@ -1776,6 +1813,16 @@ export default {
 .act-row--title[draggable="true"] {
   cursor: grab;
   &:active { cursor: grabbing; opacity: 0.6; }
+}
+
+.act-drag-handle {
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.4;
+  margin-right: 4px;
+  user-select: none;
+  flex-shrink: 0;
+  .act-row--app:hover & { opacity: 0.8; }
 }
 
 .sr-dot {
