@@ -191,13 +191,21 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
           )
             .act-dot(:style="{background: e.catColor}")
             .act-app-icon(:style="{background: e.appColor}")
-            span.act-app {{ e.app }}
-            span.act-title(:title="e.title") {{ e.title }}
-            span.act-time {{ e.timeStr }}
-            span.act-dur {{ formatDuration(e.duration) }}
+            .act-chrono-content
+              .act-chrono-top
+                span.act-app {{ e.app }}
+                span.act-time {{ e.timeStr }}
+                span.act-dur {{ formatDuration(e.duration) }}
+              .act-chrono-title(v-if="e.title" :title="e.title") {{ e.title }}
 
     //- ─── RIGHT: TIMELINE ────────────────────────────────────────────
     .chronio-timeline-panel
+      .tl-filter-badge(v-if="selectedCatFilter && selectedCatFilter !== '__unassigned__'")
+        span Filtered: {{ sidebarFlatTree.find(r => r.key === selectedCatFilter) ? sidebarFlatTree.find(r => r.key === selectedCatFilter).label : selectedCatFilter }}
+        button.tl-filter-clear(@click="selectedCatFilter = null") &times;
+      .tl-filter-badge(v-else-if="selectedCatFilter === '__unassigned__'")
+        span Filtered: Unassigned
+        button.tl-filter-clear(@click="selectedCatFilter = null") &times;
       .timeline-scroll
         .chronio-empty(v-if="!timeline.length") No timeline data for this period
         template(v-else v-for="item in timelineWithMarkers")
@@ -205,7 +213,7 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
           .tl-block(
             v-else
             :key="'b-' + item.label + item.range"
-            :style="{background: item.color, minHeight: item.height + 'px'}"
+            :style="{background: item.color, minHeight: item.height + 'px', opacity: selectedCatFilter && !isCatKeyMatch(item.catKey, selectedCatFilter) ? 0.2 : 1}"
             @click="selectedEvent = item.event"
             @mouseenter="showTooltip(item, $event)"
             @mouseleave="hideTooltip"
@@ -647,12 +655,15 @@ export default {
           const str = app + '\n' + title;
           const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
           let color: string;
+          let catKey: string | null = null;
           if (matches.length > 0) {
             const catName: string[] = (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name;
             const catColor: string = catStore.get_category_color(catName) || '#6b7a8d';
             color = `linear-gradient(135deg, ${catColor}, ${catColor}dd)`;
+            catKey = catName.join('>');
           } else {
             color = 'linear-gradient(135deg, #6b7a8d, #6b7a8ddd)';
+            catKey = '__unassigned__';
           }
           return {
             label: b.app,
@@ -660,6 +671,7 @@ export default {
             color,
             height: Math.max(36, Math.min(180, b.duration / 15)),
             event: b.event,
+            catKey,
           };
         });
     },
@@ -776,6 +788,13 @@ export default {
   },
 
   methods: {
+    // Check if a block's catKey matches the active filter (supports parent-level filtering)
+    isCatKeyMatch(blockCatKey: string | null, filter: string): boolean {
+      if (!blockCatKey || !filter) return false;
+      if (filter === '__unassigned__') return blockCatKey === '__unassigned__';
+      return blockCatKey === filter || blockCatKey.startsWith(filter + '>');
+    },
+
     // Expose module-level helpers to the template
     formatDuration(seconds: number): string {
       return formatDuration(seconds);
@@ -1573,9 +1592,35 @@ export default {
 .act-row--chrono {
   gap: 8px;
   cursor: default;
-  .act-app { font-size: 12px; font-weight: 500; white-space: nowrap; }
-  .act-title { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  align-items: flex-start;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  .act-app-icon { margin-top: 2px; }
+  .act-dot { margin-top: 4px; }
+  .act-chrono-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .act-chrono-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .act-app { font-size: 12px; font-weight: 500; white-space: nowrap; flex: 1; overflow: hidden; text-overflow: ellipsis; }
   .act-time { font-size: 11px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+  .act-dur { flex-shrink: 0; }
+  .act-chrono-title {
+    font-size: 11px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
 }
 
 /* ── RIGHT TIMELINE ──────────────────────────────────────────────── */
