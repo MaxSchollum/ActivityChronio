@@ -44,7 +44,7 @@ div(:class="{'fixed-top-padding': fixedTopMenu}")
             icon(name="stopwatch")
             | Stopwatch
 
-        b-nav-item(to="/chronio")
+        b-nav-item(:to="chronioPath")
           div.px-2.px-lg-1
             icon(name="chart-area")
             | Chronio
@@ -126,6 +126,7 @@ import 'vue-awesome/icons/mobile';
 import 'vue-awesome/icons/desktop';
 
 import _ from 'lodash';
+import moment from 'moment';
 
 import { mapState } from 'pinia';
 import { useSettingsStore } from '~/stores/settings';
@@ -143,6 +144,13 @@ export default {
   },
   computed: {
     ...mapState(useSettingsStore, ['devmode']),
+    chronioPath() {
+      if (this.activityViews && this.activityViews.length > 0) {
+        const today = moment().format('YYYY-MM-DD');
+        return `${this.activityViews[0].pathUrl}/day/${today}/view/chronio`;
+      }
+      return '/chronio';
+    },
   },
   mounted: async function () {
     const bucketStore = useBucketsStore();

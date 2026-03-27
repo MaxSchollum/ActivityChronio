@@ -10,6 +10,7 @@ from flask import (
     Blueprint,
     Flask,
     current_app,
+    request,
     send_from_directory,
 )
 from flask_cors import CORS
@@ -63,6 +64,7 @@ class AWFlask(Flask):
         self.register_blueprint(root)
         self.register_blueprint(rest.blueprint)
         self.register_blueprint(get_custom_static_blueprint(custom_static))
+        self.register_error_handler(404, spa_fallback)
 
 
 class CustomJSONProvider(flask.json.provider.DefaultJSONProvider):
@@ -92,6 +94,37 @@ def static_css(path):
 @root.route("/js/<path:path>")
 def static_js(path):
     return send_from_directory(static_folder + "/js", path)
+
+
+def _should_spa_fallback(path: str) -> bool:
+    """
+    Return True if the request should be routed to the SPA index.html.
+    This keeps API and static asset 404s intact.
+    """
+    if path.startswith("api/"):
+        return False
+    if path.startswith(
+        (
+            "css/",
+            "js/",
+            "fonts/",
+            "img/",
+            "favicon",
+            "logo.",
+            "manifest.json",
+            "service-worker.js",
+            "workbox-",
+        )
+    ):
+        return False
+    return True
+
+
+def spa_fallback(error):
+    path = request.path.lstrip("/")
+    if _should_spa_fallback(path):
+        return current_app.send_static_file("index.html")
+    return error
 
 
 def _config_cors(cors_origins: List[str], testing: bool):

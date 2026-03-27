@@ -1,5 +1,6 @@
 import Vue from 'vue';
 import VueRouter from 'vue-router';
+import moment from 'moment';
 
 const Home = () => import('./views/Home.vue');
 
@@ -35,6 +36,14 @@ const router = new VueRouter({
       },
     },
     { path: '/home', component: Home },
+    {
+      path: '/activity/:host/view/:view_id?',
+      redirect: to => {
+        const viewId = to.params.view_id ? to.params.view_id : '';
+        const today = moment().format('YYYY-MM-DD');
+        return `/activity/${to.params.host}/day/${today}/view/${viewId}`;
+      },
+    },
     {
       path: '/activity/:host/:periodLength?/:date?',
       component: Activity,

@@ -100,7 +100,15 @@ export const useViewsStore = defineStore('views', {
       await this.load();
     },
     loadViews(views: View[]) {
-      this.$patch({ views });
+      const incoming = Array.isArray(views) && views.length > 0 ? views : defaultViews;
+      const merged = [...incoming];
+      const ids = new Set(incoming.map(view => view.id));
+      defaultViews.forEach(view => {
+        if (!ids.has(view.id)) {
+          merged.push(view);
+        }
+      });
+      this.$patch({ views: merged });
       console.log('Loaded views:', this.views);
     },
     clearViews(this: State) {
