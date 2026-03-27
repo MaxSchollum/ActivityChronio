@@ -1632,6 +1632,33 @@ export default {
   background: rgba(15, 17, 23, 0.4);
 }
 
+.tl-filter-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 12px;
+  margin: 8px 12px 0;
+  background: var(--accent, #3c7bff22);
+  border: 1px solid var(--accent, #3c7bff55);
+  border-radius: 20px;
+  font-size: 11px;
+  color: var(--text-primary, #e0e6f0);
+  width: fit-content;
+}
+
+.tl-filter-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted, #8899aa);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  &:hover {
+    color: var(--text-primary, #e0e6f0);
+  }
+}
+
 .timeline-scroll {
   flex: 1;
   overflow-y: auto;
@@ -1654,7 +1681,7 @@ export default {
   padding: 8px 12px;
   color: #fff;
   cursor: pointer;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  transition: transform 0.1s ease, box-shadow 0.1s ease, opacity 0.15s ease;
   flex-shrink: 0;
   &:hover {
     transform: translateY(-1px);
