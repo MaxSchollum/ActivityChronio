@@ -24,7 +24,7 @@ export interface Category {
   children?: Category[];
 }
 
-const COLOR_UNCAT = '#CCC';
+const COLOR_UNCAT = '#6b7a8d';
 
 // The default categories
 // Should be run through createMissingParents before being used in most cases.
@@ -32,7 +32,7 @@ export const defaultCategories: Category[] = [
   {
     name: ['Work'],
     rule: { type: 'regex', regex: 'Google Docs|libreoffice|ReText' },
-    data: { color: '#0F0', score: 10 },
+    data: { color: '#22c55e', score: 10 },
   },
   {
     name: ['Work', 'Programming'],
@@ -52,7 +52,7 @@ export const defaultCategories: Category[] = [
   {
     name: ['Media'],
     rule: { type: 'none' },
-    data: { color: '#F33' },
+    data: { color: '#ef4444' },
   },
   {
     name: ['Media', 'Games'],
@@ -62,7 +62,7 @@ export const defaultCategories: Category[] = [
   {
     name: ['Media', 'Video'],
     rule: { type: 'regex', regex: 'YouTube|Plex|VLC' },
-    data: { color: '#F33' },
+    data: { color: '#ef4444' },
   },
   {
     name: ['Media', 'Social Media'],
@@ -85,7 +85,7 @@ export const defaultCategories: Category[] = [
   {
     name: ['Comms'],
     rule: { type: 'none' },
-    data: { color: '#9FF' },
+    data: { color: '#06b6d4' },
   },
   {
     name: ['Comms', 'IM'],

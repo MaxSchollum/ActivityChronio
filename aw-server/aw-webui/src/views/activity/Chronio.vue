@@ -20,9 +20,12 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
       .chronio-metric
         span.label Tracked:
         span.value {{ totalTrackedTime }}
-      .chronio-metric(v-if="productivityDisplay.show")
+      .chronio-metric
         span.label Productivity:
-        span.value(:class="productivityDisplay.colorClass") {{ productivityDisplay.text }}
+        span.value(v-if="productivityDisplay.show" :class="productivityDisplay.colorClass") {{ productivityDisplay.text }}
+        template(v-else)
+          span.value.prod-muted —
+          span.prod-hint(title="Right-click a category and mark it Productive to see your score") ?
       .chronio-search
         input(type="text" placeholder="Search…" v-model="searchQuery")
 
@@ -35,8 +38,8 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
     .chronio-sidebar
       nav.sidebar-nav
         .sidebar-nav-item.active Activities
-        .sidebar-nav-item Stats
-        .sidebar-nav-item Reports
+        .sidebar-nav-item.disabled(title="Coming in V2") Stats
+        .sidebar-nav-item.disabled(title="Coming in V2") Reports
 
       .sidebar-tree
         .sidebar-summary-row(
@@ -49,7 +52,7 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
           @click="selectedCatFilter = '__unassigned__'"
           :class="{active: selectedCatFilter === '__unassigned__'}"
         )
-          span.sr-name Unassigned
+          span.sr-name Uncategorized
           span.sr-time {{ unassignedTime }}
 
         .sidebar-divider
@@ -218,7 +221,7 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
         span Filtered: {{ sidebarFlatTree.find(r => r.key === selectedCatFilter) ? sidebarFlatTree.find(r => r.key === selectedCatFilter).label : selectedCatFilter }}
         button.tl-filter-clear(@click="selectedCatFilter = null") &times;
       .tl-filter-badge(v-else-if="selectedCatFilter === '__unassigned__'")
-        span Filtered: Unassigned
+        span Filtered: Uncategorized
         button.tl-filter-clear(@click="selectedCatFilter = null") &times;
       .timeline-scroll
         .chronio-empty(v-if="!timeline.length") No timeline data for this period
@@ -1488,6 +1491,7 @@ export default {
   border-radius: 0;
   &:hover { color: var(--text); background: rgba(255,255,255,0.04); }
   &.active { color: #4b8bff; background: rgba(75,139,255,0.08); font-weight: 500; }
+  &.disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
 }
 
 .sidebar-tree {
@@ -1893,6 +1897,21 @@ export default {
 .prod-green { color: #22c55e !important; }
 .prod-yellow { color: #f59e0b !important; }
 .prod-red { color: #ef4444 !important; }
+.prod-muted { color: var(--muted) !important; }
+.prod-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 5px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  font-size: 10px;
+  color: var(--muted);
+  cursor: help;
+  line-height: 1;
+}
 
 /* ── INLINE INPUT ───────────────────────────────────────────────── */
 .sidebar-inline-input {
