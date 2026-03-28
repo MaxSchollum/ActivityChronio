@@ -88,8 +88,8 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
               :style="{background: row.color}"
               @click.stop="openColorPicker(row, $event)"
             )
-            span.sr-name(v-if="dropTarget !== row.key") {{ row.label }}
-            span.sr-drop-label(v-else) Drop to assign to {{ row.label }}
+            span.sr-name {{ row.label }}
+            span.sr-drop-label(v-if="dropTarget === row.key") → {{ row.label }}
             span.sr-time(v-if="dropTarget !== row.key") {{ row.time }}
           //- Inline input for sub-category or rename
           .sidebar-inline-input(
@@ -172,20 +172,19 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
                 .act-app-icon(:style="{background: appNode.color}")
                 span.act-name {{ appNode.app }}
                 span.act-dur {{ formatDuration(appNode.duration) }}
-                .act-cat-btn-wrap(@click.stop)
-                  button.act-cat-btn(
-                    @click.stop="openCatMenu(appNode.app)"
-                    title="Assign to category"
-                  ) →
-                  .cat-quick-menu(v-if="showCatMenu === appNode.app" @click.stop)
-                    .cat-menu-item(
-                      v-for="cat in sidebarFlatTree"
-                      :key="cat.key"
-                      :style="{paddingLeft: (cat.depth * 10 + 8) + 'px'}"
-                      @click.stop="assignAppToCategory(appNode.app, cat)"
-                    )
-                      .cat-menu-dot(:style="{background: cat.color}")
-                      span {{ cat.label }}
+                button.act-quick-cat-btn(
+                  @click.stop="quickCatMenu = quickCatMenu === appNode.app ? null : appNode.app"
+                  title="Assign to category"
+                ) →
+              .act-quick-cat-menu(v-if="quickCatMenu === appNode.app" @click.stop)
+                .act-quick-cat-item(
+                  v-for="cat in sidebarFlatTree"
+                  :key="cat.key"
+                  :style="{paddingLeft: (cat.depth * 10 + 8) + 'px'}"
+                  @click.stop="quickAssignToCategory(appNode.app, cat)"
+                )
+                  .act-quick-cat-dot(:style="{background: cat.color}")
+                  span {{ cat.label }}
 
               template(v-if="expandedApps[catNode.catKey + '/' + appNode.app]" v-for="t in appNode.titles" :key="catNode.catKey + '/' + appNode.app + '/' + t.title")
                 .act-row.act-row--title(
@@ -249,7 +248,7 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
 
     //- ─── TOAST NOTIFICATION ─────────────────────────────────────────
     transition(name="toast")
-      .chronio-toast(v-if="toast") {{ toast.message }}
+      .chronio-toast(v-if="toast") {{ toast }}
 
     //- ─── ONBOARDING OVERLAY ─────────────────────────────────────────
     .onboarding-overlay(v-if="showOnboarding" @click.self="dismissOnboarding")
@@ -352,6 +351,10 @@ export default {
       // Drag-and-drop state
       dropTarget: null as string | null,
       dropSuccess: null as string | null,
+      // Toast notification state
+      toast: null as string | null,
+      // Quick-categorize menu state
+      quickCatMenu: null as string | null,
       // Color picker state
       colorPicker: null as { x: number; y: number; row: any; currentColor: string } | null,
       // Onboarding state
@@ -990,6 +993,7 @@ export default {
     dismissContextMenu() {
       this.contextMenu = null;
       this.colorPicker = null;
+      this.quickCatMenu = null;
     },
 
     ctxAddSub() {
@@ -1116,10 +1120,32 @@ export default {
           // Show brief success animation
           this.dropSuccess = row.key;
           setTimeout(() => { this.dropSuccess = null; }, 600);
+
+          // Show toast notification
+          this.toast = `${value} → ${row.label} ✓`;
+          setTimeout(() => { this.toast = null; }, 2500);
         }
       } catch (e) {
         // Silently ignore bad drag data
       }
+    },
+
+    // ─── QUICK CATEGORIZE (button on app row) ─────────────────────
+    quickAssignToCategory(appName: string, row: any) {
+      const escaped = appName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = '^' + escaped + '$';
+
+      const catStore = this.categoryStore as any;
+      const catName = row.key.split('>');
+      const cat = catStore.get_category(catName);
+      if (cat) {
+        catStore.appendClassRule(cat.id, pattern);
+        catStore.save();
+
+        this.toast = `${appName} → ${row.label} ✓`;
+        setTimeout(() => { this.toast = null; }, 2500);
+      }
+      this.quickCatMenu = null;
     },
 
     // ─── ONBOARDING ───────────────────────────────────────────────
@@ -1555,6 +1581,7 @@ export default {
   flex: 1;
   overflow-y: auto;
   padding: 4px 0;
+  position: relative;
 }
 
 .act-empty {
@@ -1901,6 +1928,91 @@ export default {
     background: transparent;
     padding: 0;
   }
+}
+
+/* ── DROP TARGET LABEL ──────────────────────────────────────────── */
+.sr-drop-label {
+  font-size: 11px;
+  color: #7db0ff;
+  font-weight: 600;
+  white-space: nowrap;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+/* ── TOAST NOTIFICATION ─────────────────────────────────────────── */
+.chronio-toast {
+  position: fixed;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30, 35, 50, 0.96);
+  color: #e9eefb;
+  padding: 10px 20px;
+  border-radius: 8px;
+  z-index: 2000;
+  font-size: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.toast-enter-active, .toast-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.toast-enter, .toast-leave-to {
+  opacity: 0;
+  transform: translateX(-50%) translateY(8px);
+}
+
+/* ── QUICK-CATEGORIZE BUTTON & MENU ─────────────────────────────── */
+.act-quick-cat-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  &:hover { color: var(--text); border-color: var(--border-hover); }
+}
+
+.act-row--app:hover .act-quick-cat-btn {
+  opacity: 1;
+}
+
+.act-quick-cat-menu {
+  position: absolute;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  z-index: 100;
+  min-width: 160px;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  right: 12px;
+}
+
+.act-quick-cat-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  &:hover { background: rgba(75, 139, 255, 0.15); }
+}
+
+.act-quick-cat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 /* ── DRAG & DROP FEEDBACK ───────────────────────────────────────── */
