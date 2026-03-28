@@ -23,7 +23,12 @@ from .log import FlaskLogHandler
 logger = logging.getLogger(__name__)
 
 app_folder = os.path.dirname(os.path.abspath(__file__))
-static_folder = os.path.join(app_folder, "static")
+# Prefer aw-webui/dist/ (the live build output) over the copied aw_server/static/ snapshot.
+# This ensures that a freshly-built webui is served immediately without requiring the
+# manual "cp -r aw-webui/dist/* aw_server/static/" copy step from the Makefile.
+# Falls back to aw_server/static/ for packaged/installed distributions where dist/ is absent.
+_webui_dist = os.path.join(os.path.dirname(app_folder), "aw-webui", "dist")
+static_folder = _webui_dist if os.path.isdir(_webui_dist) else os.path.join(app_folder, "static")
 
 root = Blueprint("root", __name__, url_prefix="/")
 
