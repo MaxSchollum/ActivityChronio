@@ -248,7 +248,12 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
 
     //- ─── TOAST NOTIFICATION ─────────────────────────────────────────
     transition(name="toast")
-      .chronio-toast(v-if="toast") {{ toast }}
+      .chronio-toast(v-if="toast")
+        span.toast-message {{ toast.message }}
+        label.toast-always
+          input(type="checkbox" v-model="toast.alwaysSave" @change="_onAlwaysSaveChange")
+          | Always save
+        button.toast-undo(@click="_undoCategorization") Undo
 
     //- ─── ONBOARDING OVERLAY ─────────────────────────────────────────
     .onboarding-overlay(v-if="showOnboarding" @click.self="dismissOnboarding")
@@ -351,8 +356,15 @@ export default {
       // Drag-and-drop state
       dropTarget: null as string | null,
       dropSuccess: null as string | null,
-      // Toast notification state
-      toast: null as string | null,
+      // Toast notification state (rich object with undo + always-save)
+      toast: null as {
+        message: string;
+        alwaysSave: boolean;
+        catId: number;
+        prevRegex: string | null;
+        prevType: string | null;
+        timer: ReturnType<typeof setTimeout> | null;
+      } | null,
       // Quick-categorize menu state
       quickCatMenu: null as string | null,
       // Color picker state
@@ -1105,47 +1117,84 @@ export default {
         if (!raw) return;
         const { type, value } = JSON.parse(raw);
         if (!value) return;
-
-        // Escape special regex characters
         const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const pattern = type === 'app' ? ('^' + escaped + '$') : escaped;
-
-        const catStore = this.categoryStore as any;
-        const catName = row.key.split('>');
-        const cat = catStore.get_category(catName);
-        if (cat) {
-          catStore.appendClassRule(cat.id, pattern);
-          catStore.save();
-
-          // Show brief success animation
-          this.dropSuccess = row.key;
-          setTimeout(() => { this.dropSuccess = null; }, 600);
-
-          // Show toast notification
-          this.toast = `${value} → ${row.label} ✓`;
-          setTimeout(() => { this.toast = null; }, 2500);
-        }
-      } catch (e) {
-        // Silently ignore bad drag data
-      }
+        this._applyRule(value, row, pattern, type === 'app');
+        this.dropSuccess = row.key;
+        setTimeout(() => { this.dropSuccess = null; }, 600);
+      } catch (e) { /* ignore bad drag data */ }
     },
 
     // ─── QUICK CATEGORIZE (button on app row) ─────────────────────
     quickAssignToCategory(appName: string, row: any) {
       const escaped = appName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const pattern = '^' + escaped + '$';
+      this._applyRule(appName, row, pattern, true);
+      this.quickCatMenu = null;
+    },
 
+    // ─── SHARED RULE HELPER ───────────────────────────────────────
+    // Appends rule in memory immediately (no save). Shows a 5s toast
+    // with Undo and "Always save" checkbox (checked by default for apps).
+    // Only persists to disk when timer fires with alwaysSave=true,
+    // or when user explicitly keeps the rule by letting the toast expire.
+    _applyRule(label: string, row: any, pattern: string, isApp: boolean) {
       const catStore = this.categoryStore as any;
       const catName = row.key.split('>');
       const cat = catStore.get_category(catName);
-      if (cat) {
-        catStore.appendClassRule(cat.id, pattern);
-        catStore.save();
+      if (!cat) return;
 
-        this.toast = `${appName} → ${row.label} ✓`;
-        setTimeout(() => { this.toast = null; }, 2500);
+      // Snapshot previous rule state for undo
+      const prevRegex = cat.rule?.regex ?? null;
+      const prevType = cat.rule?.type ?? null;
+
+      // Append in memory only — no save() yet
+      catStore.appendClassRule(cat.id, pattern);
+
+      // Clear any existing toast timer
+      if (this.toast?.timer) clearTimeout(this.toast.timer);
+
+      const timer = setTimeout(() => {
+        if (this.toast?.alwaysSave) {
+          catStore.save();
+        } else {
+          // User left "Always save" unchecked → revert
+          this._revertRule(cat.id, prevRegex, prevType);
+        }
+        this.toast = null;
+      }, 5000);
+
+      this.toast = {
+        message: `${label} → ${row.label} ✓`,
+        alwaysSave: isApp, // default checked for apps, unchecked for titles
+        catId: cat.id,
+        prevRegex,
+        prevType,
+        timer,
+      };
+    },
+
+    _undoCategorization() {
+      if (!this.toast) return;
+      if (this.toast.timer) clearTimeout(this.toast.timer);
+      this._revertRule(this.toast.catId, this.toast.prevRegex, this.toast.prevType);
+      this.toast = null;
+    },
+
+    _onAlwaysSaveChange() {
+      // No immediate action — the timer will check alwaysSave on expiry
+    },
+
+    _revertRule(catId: number, prevRegex: string | null, prevType: string | null) {
+      const catStore = this.categoryStore as any;
+      const cat = catStore.classes?.find((c: any) => c.id === catId);
+      if (!cat) return;
+      if (prevType === null || prevType === 'none') {
+        cat.rule = { type: 'none' };
+      } else {
+        cat.rule = { type: prevType, regex: prevRegex ?? '' };
       }
-      this.quickCatMenu = null;
+      catStore.classes_unsaved_changes = true;
     },
 
     // ─── ONBOARDING ───────────────────────────────────────────────
@@ -1946,15 +1995,39 @@ export default {
   bottom: 32px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(30, 35, 50, 0.96);
+  background: rgba(30, 35, 50, 0.97);
   color: #e9eefb;
-  padding: 10px 20px;
-  border-radius: 8px;
+  padding: 10px 14px 10px 18px;
+  border-radius: 10px;
   z-index: 2000;
   font-size: 13px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+.toast-message { flex: 1; }
+.toast-always {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  input { cursor: pointer; accent-color: #4b8bff; }
+}
+.toast-undo {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.2);
+  color: #e9eefb;
+  border-radius: 5px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  &:hover { background: rgba(255,255,255,0.1); }
 }
 
 .toast-enter-active, .toast-leave-active {
