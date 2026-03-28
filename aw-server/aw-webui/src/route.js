@@ -31,9 +31,7 @@ const router = new VueRouter({
   routes: [
     {
       path: '/',
-      redirect: _to => {
-        return localStorage.landingpage || '/home';
-      },
+      redirect: '/chronio',
     },
     { path: '/home', component: Home },
     {
@@ -76,7 +74,7 @@ const router = new VueRouter({
     { path: '/settings', component: Settings },
     { path: '/settings/category-builder', component: CategoryBuilder },
     { path: '/stopwatch', component: Stopwatch },
-    { path: '/chronio', component: Chronio, meta: { fullContainer: true } },
+    { path: '/chronio', component: Chronio, meta: { fullContainer: true, standalone: true } },
     { path: '/search', component: Search },
     { path: '/graph', component: Graph },
     { path: '/dev', component: Dev },
