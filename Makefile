@@ -7,7 +7,7 @@
 #
 # We recommend creating and activating a Python virtualenv before building.
 # Instructions on how to do this can be found in the guide linked above.
-.PHONY: build install test clean clean_all
+.PHONY: build build-webui install test clean clean_all
 
 SHELL := /usr/bin/env bash
 
@@ -33,6 +33,18 @@ TESTABLES := $(foreach dir,$(SUBMODULES),$(call has_target,$(dir),test))
 PACKAGEABLES := $(foreach dir,$(SUBMODULES),$(call has_target,$(dir),package))
 LINTABLES := $(foreach dir,$(SUBMODULES),$(call has_target,$(dir),lint))
 TYPECHECKABLES := $(foreach dir,$(SUBMODULES),$(call has_target,$(dir),typecheck))
+
+# The `build-webui` target
+# ------------------------
+#
+# Rebuilds only the web UI bundle (aw-server/aw-webui/dist/).
+# server.py prefers this dist/ directory over aw_server/static/, so running
+# this target is sufficient to ensure the dev server serves the latest UI.
+# Run this whenever you change aw-webui sources and want the Flask server to
+# pick them up without a full `make build`.
+build-webui:
+	make --directory=aw-server/aw-webui build
+
 
 # The `build` target
 # ------------------
