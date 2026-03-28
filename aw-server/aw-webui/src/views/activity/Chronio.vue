@@ -88,8 +88,9 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
               :style="{background: row.color}"
               @click.stop="openColorPicker(row, $event)"
             )
-            span.sr-name {{ row.label }}
-            span.sr-time {{ row.time }}
+            span.sr-name(v-if="dropTarget !== row.key") {{ row.label }}
+            span.sr-drop-label(v-else) Drop to assign to {{ row.label }}
+            span.sr-time(v-if="dropTarget !== row.key") {{ row.time }}
           //- Inline input for sub-category or rename
           .sidebar-inline-input(
             v-if="inlineInput && inlineInput.parentKey === row.key && (inlineInput.mode === 'createSub' || inlineInput.mode === 'rename')"
@@ -171,6 +172,20 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
                 .act-app-icon(:style="{background: appNode.color}")
                 span.act-name {{ appNode.app }}
                 span.act-dur {{ formatDuration(appNode.duration) }}
+                .act-cat-btn-wrap(@click.stop)
+                  button.act-cat-btn(
+                    @click.stop="openCatMenu(appNode.app)"
+                    title="Assign to category"
+                  ) →
+                  .cat-quick-menu(v-if="showCatMenu === appNode.app" @click.stop)
+                    .cat-menu-item(
+                      v-for="cat in sidebarFlatTree"
+                      :key="cat.key"
+                      :style="{paddingLeft: (cat.depth * 10 + 8) + 'px'}"
+                      @click.stop="assignAppToCategory(appNode.app, cat)"
+                    )
+                      .cat-menu-dot(:style="{background: cat.color}")
+                      span {{ cat.label }}
 
               template(v-if="expandedApps[catNode.catKey + '/' + appNode.app]" v-for="t in appNode.titles" :key="catNode.catKey + '/' + appNode.app + '/' + t.title")
                 .act-row.act-row--title(
@@ -231,6 +246,10 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
         .tl-tooltip-title {{ tooltip.title }}
         .tl-tooltip-cat {{ tooltip.category }}
         .tl-tooltip-meta {{ tooltip.range }} &middot; {{ tooltip.duration }}
+
+    //- ─── TOAST NOTIFICATION ─────────────────────────────────────────
+    transition(name="toast")
+      .chronio-toast(v-if="toast") {{ toast.message }}
 
     //- ─── ONBOARDING OVERLAY ─────────────────────────────────────────
     .onboarding-overlay(v-if="showOnboarding" @click.self="dismissOnboarding")
@@ -602,7 +621,21 @@ export default {
       for (const e of sorted) {
         const app: string = e.data?.app || 'Unknown';
         if (current && current.app === app) {
-          const eEnd = moment(e.timestamp).add(e.duration, 'seconds');
+          const eStart = moment(e.timestamp);
+          const gapSeconds = eStart.diff(current.end, 'seconds');
+          if (gapSeconds > 15 * 60) {
+            // Gap too large — start a new block instead of extending across the gap
+            merged1.push(current);
+            current = {
+              app,
+              start: eStart,
+              end: eStart.clone().add(e.duration, 'seconds'),
+              duration: e.duration,
+              event: e,
+            };
+            continue;
+          }
+          const eEnd = eStart.clone().add(e.duration, 'seconds');
           if (eEnd.isAfter(current.end)) current.end = eEnd;
           current.duration += e.duration;
           continue;

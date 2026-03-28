@@ -10,6 +10,7 @@ from flask import (
     Blueprint,
     Flask,
     current_app,
+    request,
     send_from_directory,
 )
 from flask_cors import CORS
@@ -22,7 +23,12 @@ from .log import FlaskLogHandler
 logger = logging.getLogger(__name__)
 
 app_folder = os.path.dirname(os.path.abspath(__file__))
-static_folder = os.path.join(app_folder, "static")
+# Prefer aw-webui/dist/ (the live build output) over the copied aw_server/static/ snapshot.
+# This ensures that a freshly-built webui is served immediately without requiring the
+# manual "cp -r aw-webui/dist/* aw_server/static/" copy step from the Makefile.
+# Falls back to aw_server/static/ for packaged/installed distributions where dist/ is absent.
+_webui_dist = os.path.join(os.path.dirname(app_folder), "aw-webui", "dist")
+static_folder = _webui_dist if os.path.isdir(_webui_dist) else os.path.join(app_folder, "static")
 
 root = Blueprint("root", __name__, url_prefix="/")
 
@@ -63,6 +69,7 @@ class AWFlask(Flask):
         self.register_blueprint(root)
         self.register_blueprint(rest.blueprint)
         self.register_blueprint(get_custom_static_blueprint(custom_static))
+        self.register_error_handler(404, spa_fallback)
 
 
 class CustomJSONProvider(flask.json.provider.DefaultJSONProvider):
@@ -92,6 +99,37 @@ def static_css(path):
 @root.route("/js/<path:path>")
 def static_js(path):
     return send_from_directory(static_folder + "/js", path)
+
+
+def _should_spa_fallback(path: str) -> bool:
+    """
+    Return True if the request should be routed to the SPA index.html.
+    This keeps API and static asset 404s intact.
+    """
+    if path.startswith("api/"):
+        return False
+    if path.startswith(
+        (
+            "css/",
+            "js/",
+            "fonts/",
+            "img/",
+            "favicon",
+            "logo.",
+            "manifest.json",
+            "service-worker.js",
+            "workbox-",
+        )
+    ):
+        return False
+    return True
+
+
+def spa_fallback(error):
+    path = request.path.lstrip("/")
+    if _should_spa_fallback(path):
+        return current_app.send_static_file("index.html")
+    return error
 
 
 def _config_cors(cors_origins: List[str], testing: bool):
