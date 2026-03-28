@@ -7,7 +7,7 @@
 #
 # We recommend creating and activating a Python virtualenv before building.
 # Instructions on how to do this can be found in the guide linked above.
-.PHONY: build build-webui install test clean clean_all
+.PHONY: build build-webui deploy-webui install test clean clean_all
 
 SHELL := /usr/bin/env bash
 
@@ -45,6 +45,16 @@ TYPECHECKABLES := $(foreach dir,$(SUBMODULES),$(call has_target,$(dir),typecheck
 build-webui:
 	make --directory=aw-server/aw-webui build
 
+# The `deploy-webui` target
+# -------------------------
+#
+# Builds the web UI AND copies dist/ into aw_server/static/ so that the
+# already-running Flask server (which resolves static_folder at startup)
+# immediately serves the new bundle without requiring a server restart.
+# Use this during active development instead of build-webui.
+deploy-webui: build-webui
+	cp -r aw-server/aw-webui/dist/. aw-server/aw_server/static/
+	@echo "✓ New bundle deployed to aw_server/static/ — hard-refresh browser (Cmd+Shift+R)"
 
 # The `build` target
 # ------------------

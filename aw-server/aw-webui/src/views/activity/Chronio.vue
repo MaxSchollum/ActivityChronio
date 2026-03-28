@@ -162,7 +162,7 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
 
             template(v-if="expandedCats[catNode.catKey]" v-for="appNode in catNode.apps" :key="catNode.catKey + '/' + appNode.app")
               .act-row.act-row--app(
-                draggable="true"
+                :draggable="true"
                 @dragstart="onDragStart($event, 'app', appNode.app)"
                 @click="toggleExpandApp(catNode.catKey + '/' + appNode.app)"
                 title="Drag to a category to assign"
@@ -188,7 +188,7 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
 
               template(v-if="expandedApps[catNode.catKey + '/' + appNode.app]" v-for="t in appNode.titles" :key="catNode.catKey + '/' + appNode.app + '/' + t.title")
                 .act-row.act-row--title(
-                  draggable="true"
+                  :draggable="true"
                   @dragstart="onDragStart($event, 'title', t.rawTitle || t.title)"
                 )
                   .act-indent2
