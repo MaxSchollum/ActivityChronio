@@ -195,7 +195,7 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
                   @dragstart="onDragStart($event, 'title', t.rawTitle || t.title)"
                 )
                   .act-indent2
-                  span.act-title(:title="t.title") {{ t.title }}
+                  span.act-title(:title="t.title") {{ formatTabTitle(t.title) }}
                   span.act-dur {{ formatDuration(t.duration) }}
 
         //- CHRONOLOGICAL VIEW
@@ -253,9 +253,6 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
     transition(name="toast")
       .chronio-toast(v-if="toast")
         span.toast-message {{ toast.message }}
-        label.toast-always
-          input(type="checkbox" v-model="toast.alwaysSave" @change="_onAlwaysSaveChange")
-          | Always save
         button.toast-undo(@click="_undoCategorization") Undo
 
     //- ─── ONBOARDING OVERLAY ─────────────────────────────────────────
@@ -325,6 +322,30 @@ function formatHHMM(ts: any): string {
   return moment(ts).format('HH:mm');
 }
 
+/**
+ * Reformats a browser window title into "Service: Page Title" form.
+ * Most browser window titles follow the pattern "Page Title - Service" or "Page Title | Service".
+ * We flip it so the service acts as a namespace prefix.
+ * e.g. "Some tweet - X"          → "X: Some tweet"
+ *      "Thread name - ChatGPT"   → "ChatGPT: Thread name"
+ *      "Home / X"                → "X: Home"
+ *      "Stack Overflow - ..."    → "Stack Overflow: ..."
+ * If no separator is found the title is returned unchanged.
+ */
+function formatTabTitle(rawTitle: string): string {
+  if (!rawTitle) return rawTitle;
+  // Match "Page Title  -  Service" or "Page Title / Service" or "Page Title | Service"
+  // We take the LAST separator as the split point to handle titles that themselves contain dashes
+  const match = rawTitle.match(/^([\s\S]+?)\s+[-/|–—]\s+([^-/|–—]+)$/);
+  if (!match) return rawTitle;
+  const [, pageTitle, service] = match;
+  const pageTrimmed = pageTitle.trim();
+  const serviceTrimmed = service.trim();
+  // Avoid "Service: Service" when title IS the service name
+  if (pageTrimmed.toLowerCase() === serviceTrimmed.toLowerCase()) return serviceTrimmed;
+  return `${serviceTrimmed}: ${pageTrimmed}`;
+}
+
 function gradientForApp(app: string, index: number): string {
   return GRADIENTS[index % GRADIENTS.length];
 }
@@ -362,7 +383,6 @@ export default {
       // Toast notification state (rich object with undo + always-save)
       toast: null as {
         message: string;
-        alwaysSave: boolean;
         catId: number;
         prevRegex: string | null;
         prevType: string | null;
@@ -1137,11 +1157,9 @@ export default {
     },
 
     // ─── SHARED RULE HELPER ───────────────────────────────────────
-    // Appends rule in memory immediately (no save). Shows a 5s toast
-    // with Undo and "Always save" checkbox (checked by default for apps).
-    // Only persists to disk when timer fires with alwaysSave=true,
-    // or when user explicitly keeps the rule by letting the toast expire.
-    _applyRule(label: string, row: any, pattern: string, isApp: boolean) {
+    // Appends rule, saves immediately, and shows a 4s toast with an Undo button.
+    // Undo reverts the rule and saves the revert so it is also permanent.
+    _applyRule(label: string, row: any, pattern: string, _isApp: boolean) {
       const catStore = this.categoryStore as any;
       const catName = row.key.split('>');
       const cat = catStore.get_category(catName);
@@ -1151,25 +1169,18 @@ export default {
       const prevRegex = cat.rule?.regex ?? null;
       const prevType = cat.rule?.type ?? null;
 
-      // Append in memory only — no save() yet
+      // Apply rule and save immediately so it survives any reload
       catStore.appendClassRule(cat.id, pattern);
+      catStore.save();
 
       // Clear any existing toast timer
       if (this.toast?.timer) clearTimeout(this.toast.timer);
 
-      const timer = setTimeout(() => {
-        if (this.toast?.alwaysSave) {
-          catStore.save();
-        } else {
-          // User left "Always save" unchecked → revert
-          this._revertRule(cat.id, prevRegex, prevType);
-        }
-        this.toast = null;
-      }, 5000);
+      // Auto-dismiss after 4s
+      const timer = setTimeout(() => { this.toast = null; }, 4000);
 
       this.toast = {
         message: `${label} → ${row.label} ✓`,
-        alwaysSave: isApp, // default checked for apps, unchecked for titles
         catId: cat.id,
         prevRegex,
         prevType,
@@ -1180,12 +1191,11 @@ export default {
     _undoCategorization() {
       if (!this.toast) return;
       if (this.toast.timer) clearTimeout(this.toast.timer);
-      this._revertRule(this.toast.catId, this.toast.prevRegex, this.toast.prevType);
+      const { catId, prevRegex, prevType } = this.toast;
       this.toast = null;
-    },
-
-    _onAlwaysSaveChange() {
-      // No immediate action — the timer will check alwaysSave on expiry
+      this._revertRule(catId, prevRegex, prevType);
+      // Save the revert so it persists too
+      (this.categoryStore as any).save();
     },
 
     _revertRule(catId: number, prevRegex: string | null, prevType: string | null) {
@@ -2028,16 +2038,6 @@ export default {
   white-space: nowrap;
 }
 .toast-message { flex: 1; }
-.toast-always {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--muted);
-  cursor: pointer;
-  user-select: none;
-  input { cursor: pointer; accent-color: #4b8bff; }
-}
 .toast-undo {
   background: transparent;
   border: 1px solid rgba(255,255,255,0.2);
