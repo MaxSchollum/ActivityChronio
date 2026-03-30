@@ -28,23 +28,51 @@ Chronio is a personal macOS activity tracker forked from ActivityWatch. Core goa
 
 ---
 
-## What's NOT Built
+## What's Built (as of 2026-03-30)
 
-| Gap | Impact |
-|-----|--------|
-| `loginwindow` still appears in events | Data quality |
-| No drag-to-categorize | Core UX missing |
-| Timeline uses app colors, not category colors | Visual incoherence |
-| No productivity score | Core metric missing |
-| Category creation uses `window.prompt` | Broken UX |
-| No category rename/delete/color picker | Incomplete CRUD |
-| Stats/Reports nav items are placeholders | Dead UI |
-| No live refresh on today's view | Feels static |
-| "Now" line doesn't auto-update | Minor polish |
-| No timeline hover tooltip | Missing detail |
-| No screenshot capture | V2 feature |
-| No week/month views | V2 feature |
-| No macOS app packaging | V2 feature |
+| Feature | Notes |
+|---------|-------|
+| Real data from AW server | Window + AFK events |
+| AFK filtering | >10% not-afk threshold, clips to first overlap |
+| 3-column layout | Sidebar / activity list / timeline |
+| Day navigation + date picker | Prev/next + calendar input |
+| Browser tab granularity | Chrome, Safari, Firefox |
+| Unified + chronological views | Toggle between hierarchy and flat time-sort |
+| Timeline | Proportional blocks, category colors, hour gridlines, gap detection |
+| Live refresh + "Now" line | 60s interval (today only), now-line updates per minute |
+| Timeline hover tooltip | App, title, category, time range, duration |
+| Full-screen standalone mode | No ActivityWatch chrome, `localhost:5600` → `/chronio` |
+| Drag-to-categorize | App rows + title rows → sidebar category, saves immediately |
+| Toast + Undo | 4s auto-dismiss, Undo reverts and saves |
+| Sidebar category CRUD | Create, rename, delete, subcategory via context menu |
+| Color picker | Preset palette + custom hex |
+| Right-click context menu | Score, color, rename, delete |
+| Productivity score | Topbar %, green/yellow/red; "— ?" when no categories scored |
+| Expand/collapse persists | localStorage |
+| Sidebar category filter | Filters list + dims timeline |
+| Search | Substring on app + title |
+| Stats/Reports nav disabled | "Coming in V2" tooltip |
+| "Uncategorized" terminology | Unified throughout |
+| Softer default color palette | Work #22c55e, Media #ef4444, Comms #06b6d4 |
+| Tab title format | "Service: Page Title" extracted from browser window titles |
+| loginwindow filtered | + ScreenSaverEngine |
+| First-run onboarding | 3-step overlay, dismissed to localStorage |
+
+## What's NOT Built (open V1 issues)
+
+| Gap | GitHub Issue |
+|-----|-------------|
+| Click entire category row to expand/collapse | [#28](https://github.com/MaxSchollum/ActivityChronio/issues/28) |
+| Click selected category to deselect | [#29](https://github.com/MaxSchollum/ActivityChronio/issues/29) |
+| Inline rename overlays name in-place | [#30](https://github.com/MaxSchollum/ActivityChronio/issues/30) |
+| + button creates subcategory of selected folder | [#31](https://github.com/MaxSchollum/ActivityChronio/issues/31) |
+| Drag category into another to reparent | [#32](https://github.com/MaxSchollum/ActivityChronio/issues/32) |
+| Sub-item indentation improvements | [#33](https://github.com/MaxSchollum/ActivityChronio/issues/33) |
+| Multi-select rows with Cmd+click | [#34](https://github.com/MaxSchollum/ActivityChronio/issues/34) |
+| Auto-refresh without jarring blink | [#35](https://github.com/MaxSchollum/ActivityChronio/issues/35) |
+| No screenshot capture | V2 |
+| No week/month views | V2 |
+| No macOS app packaging | V2 |
 
 ---
 
