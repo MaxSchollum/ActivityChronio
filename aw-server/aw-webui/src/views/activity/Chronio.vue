@@ -20,6 +20,8 @@ div.chronio-view
       .chronio-metric
         span.label Tracked:
         span.value {{ totalTrackedTime }}
+      .chronio-afk-badge(:class="afkStatus" :title="afkStatus === 'active' ? 'AFK idle detection active' : 'No AFK data — idle time not filtered'")
+        | {{ afkStatus === 'active' ? 'AFK ✓' : 'AFK ⚠' }}
       .chronio-search
         input(type="text" placeholder="Search…" v-model="searchQuery")
 
@@ -119,6 +121,23 @@ div.chronio-view
               title="Drag to reorder"
             ) ⠿
 
+        //- Mini calendar (#52)
+        .sidebar-calendar
+          .cal-header
+            button.cal-nav(@click="prevCalMonth") ‹
+            span.cal-title {{ calendarMonthLabel }}
+            button.cal-nav(@click="nextCalMonth") ›
+          .cal-grid
+            span.cal-dow(v-for="(d, i) in ['S','M','T','W','T','F','S']" :key="i") {{ d }}
+            .cal-day(
+              v-for="cell in calendarDays"
+              :key="cell.key"
+              :class="{ 'in-month': cell.inMonth, 'is-today': cell.isToday, 'is-selected': cell.isSelected, 'has-data': cell.hasData }"
+              @click="cell.inMonth && onDateChange(cell.date)"
+            )
+              span(v-if="cell.inMonth") {{ cell.day }}
+              .cal-dot(v-if="cell.hasData && cell.inMonth")
+
         //- Context menu
         .sidebar-ctx-menu(
           v-if="ctxMenu"
@@ -199,7 +218,7 @@ div.chronio-view
               .act-row.act-row--app(
                 draggable="true"
                 :class="{'row-selected': selectedRowKeys[appRowKey(catNode.catKey, appNode.app)]}"
-                @click="toggleExpandApp(catNode.catKey + '/' + appNode.app)"
+                @click="onUnifiedAppRowClick(catNode.catKey, appNode, $event)"
                 @dragstart="onDragStartApp(appNode, $event)"
                 @dragend="onDragEnd"
               )
@@ -439,6 +458,10 @@ export default {
       refreshTimer: null as any,
       // #35: guard to skip silent refresh if a full refresh is already in flight
       isRefreshing: false as boolean,
+      // Mini calendar (#52)
+      calendarYear: 0 as number,
+      calendarMonth: 0 as number,   // 0-based (moment month)
+      calendarDots: {} as Record<string, boolean>,
       // keyboard handler ref (#44)
       keyHandler: null as any,
     };
@@ -488,6 +511,10 @@ export default {
     activeWindowEvents(): any[] {
       const events = this.windowEvents || [];
       const intervals = this.notAfkIntervals;
+      // Fail-open: if no AFK data available, show all window events unfiltered
+      if (intervals.length === 0) {
+        return events.filter((e: any) => !SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app));
+      }
       return events.filter((e: any) => {
         if (SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app)) return false;
         const eStart = moment(e.timestamp).valueOf();
@@ -498,6 +525,41 @@ export default {
         const eventDur = eEnd - eStart;
         return totalNotAfk > 0 && totalNotAfk / eventDur > 0.1;
       });
+    },
+
+    afkStatus(): 'active' | 'no-data' {
+      if (this.loading) return 'no-data';
+      return this.notAfkIntervals.length > 0 ? 'active' : 'no-data';
+    },
+
+    calendarMonthLabel(): string {
+      return moment().year(this.calendarYear).month(this.calendarMonth).format('MMM YYYY');
+    },
+
+    calendarDays(): any[] {
+      if (!this.calendarYear) return [];
+      const firstDay = moment().year(this.calendarYear).month(this.calendarMonth).date(1);
+      const daysInMonth = firstDay.daysInMonth();
+      const startDow = firstDay.day(); // 0=Sun
+      const today = moment().format('YYYY-MM-DD');
+      const cells: any[] = [];
+      // Pad before start
+      for (let i = 0; i < startDow; i++) {
+        cells.push({ key: 'pad-' + i, inMonth: false, date: '', day: 0, hasData: false, isToday: false, isSelected: false });
+      }
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = moment().year(this.calendarYear).month(this.calendarMonth).date(d).format('YYYY-MM-DD');
+        cells.push({
+          key: date,
+          inMonth: true,
+          date,
+          day: d,
+          hasData: !!this.calendarDots[date],
+          isToday: date === today,
+          isSelected: date === this.selectedDate,
+        });
+      }
+      return cells;
     },
 
     totalTrackedTime(): string {
@@ -1314,6 +1376,16 @@ export default {
       return catKey + '/APP:' + app + '/T:' + title;
     },
 
+    // Unified view app rows: modifier key → multiselect, plain click → expand toggle
+    onUnifiedAppRowClick(catKey: string, appNode: any, evt: MouseEvent) {
+      if (evt.metaKey || evt.ctrlKey || evt.shiftKey) {
+        const key = this.appRowKey(catKey, appNode.app);
+        this.onActivityRowClick(key, { type: 'app', app: appNode.app, title: '' }, evt);
+      } else {
+        this.toggleExpandApp(catKey + '/' + appNode.app);
+      }
+    },
+
     onActivityRowClick(key: string, payload: any, evt: MouseEvent) {
       evt.preventDefault();
       if (evt.shiftKey && this.lastClickedKey) {
@@ -1414,6 +1486,41 @@ export default {
         if (cats) this.expandedCats = JSON.parse(cats);
       } catch (e) {
         // localStorage unavailable
+      }
+    },
+
+    // ─── MINI CALENDAR (#52) ─────────────────────────────────────────
+    prevCalMonth() {
+      const m = moment().year(this.calendarYear).month(this.calendarMonth).subtract(1, 'month');
+      this.calendarYear = m.year();
+      this.calendarMonth = m.month();
+      this.loadCalendarDots();
+    },
+    nextCalMonth() {
+      const m = moment().year(this.calendarYear).month(this.calendarMonth).add(1, 'month');
+      this.calendarYear = m.year();
+      this.calendarMonth = m.month();
+      this.loadCalendarDots();
+    },
+    async loadCalendarDots() {
+      const monthStart = moment().year(this.calendarYear).month(this.calendarMonth).startOf('month').toDate();
+      const monthEnd = moment().year(this.calendarYear).month(this.calendarMonth).endOf('month').toDate();
+      const params = { start: monthStart, end: monthEnd, limit: -1 };
+      const allHosts: string[] = (this.bucketsStore.hosts as string[])
+        .filter((h: string) => h && h !== 'unknown' && !/^\d+\.\d+\.\d+\.\d+$/.test(h));
+      const allWindowBuckets: string[] = allHosts.flatMap((h: string) => this.bucketsStore.bucketsWindow(h));
+      try {
+        const arrays = await Promise.all(
+          allWindowBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
+        );
+        const dots: Record<string, boolean> = {};
+        arrays.flat().forEach((e: any) => {
+          const d = moment(e.timestamp).format('YYYY-MM-DD');
+          dots[d] = true;
+        });
+        this.calendarDots = dots;
+      } catch (e) {
+        // silently ignore calendar fetch errors
       }
     },
 
@@ -1531,12 +1638,16 @@ export default {
     const settingsStore = this.settingsStore;
     await settingsStore.ensureLoaded();
     this.selectedDate = get_today_with_offset(settingsStore.startOfDay);
+    const today = moment(this.selectedDate);
+    this.calendarYear = today.year();
+    this.calendarMonth = today.month();
     await this.bucketsStore.ensureLoaded();
     await (this.categoryStore as any).load();
     this.loadExpandState();
     this.checkOnboarding();
     if (this.host) {
       await this.refresh();
+      this.loadCalendarDots();
     } else {
       this.loading = false;
     }
@@ -1659,6 +1770,17 @@ export default {
   color: var(--muted);
   white-space: nowrap;
   .value { color: var(--text); font-weight: 600; }
+}
+
+.chronio-afk-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+  cursor: default;
+  &.active { background: rgba(29, 185, 84, 0.15); color: #1db954; }
+  &.no-data { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
 }
 
 .chronio-search {
@@ -1820,6 +1942,82 @@ export default {
   outline: none;
   height: 22px;
   box-sizing: border-box;
+}
+
+/* ─── MINI CALENDAR (#52) */
+.sidebar-calendar {
+  padding: 10px 10px 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.cal-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.cal-nav {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  &:hover { color: var(--text); }
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+.cal-dow {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  padding: 2px 0;
+  font-weight: 600;
+}
+.cal-day {
+  position: relative;
+  text-align: center;
+  font-size: 11px;
+  padding: 4px 2px 6px;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: default;
+  &.in-month {
+    color: var(--text);
+    cursor: pointer;
+    &:hover { background: rgba(255,255,255,0.06); }
+  }
+  &.is-today {
+    background: rgba(75,139,255,0.12);
+    color: #7db0ff;
+    font-weight: 700;
+  }
+  &.is-selected {
+    background: rgba(75,139,255,0.25);
+    color: #fff;
+    font-weight: 700;
+  }
+}
+.cal-dot {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #4b8bff;
+  .is-selected & { background: #fff; }
 }
 
 .sidebar-ctx-menu {
