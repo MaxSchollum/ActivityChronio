@@ -199,15 +199,12 @@ div.chronio-view
               .act-row.act-row--app(
                 draggable="true"
                 :class="{'row-selected': selectedRowKeys[appRowKey(catNode.catKey, appNode.app)]}"
-                @click="onActivityRowClick(appRowKey(catNode.catKey, appNode.app), {type:'app', app: appNode.app, title: ''}, $event)"
+                @click="toggleExpandApp(catNode.catKey + '/' + appNode.app)"
                 @dragstart="onDragStartApp(appNode, $event)"
                 @dragend="onDragEnd"
               )
                 .act-indent
-                span.act-expand(
-                  v-if="appNode.titles && appNode.titles.length"
-                  @click.stop="toggleExpandApp(catNode.catKey + '/' + appNode.app)"
-                ) {{ expandedApps[catNode.catKey + '/' + appNode.app] ? '▾' : '▸' }}
+                span.act-expand(v-if="appNode.titles && appNode.titles.length") {{ expandedApps[catNode.catKey + '/' + appNode.app] ? '▾' : '▸' }}
                 span.act-expand-spacer(v-else)
                 .act-app-icon(:style="{background: appNode.color}")
                 span.act-name {{ appNode.app }}
@@ -516,10 +513,18 @@ export default {
       const events: any[] = this.activeWindowEvents;
       const categories: any[] = (this.categoryStore as any).classes;
 
-      // Pre-compile regexes once
+      // Pre-compile regexes once; strip Python-style inline flags like (?m) which are invalid in JS
       const regexes: [any, RegExp][] = categories
         .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
-        .map((c: any) => [c, new RegExp(c.rule.regex, (c.rule.ignore_case ? 'i' : '') + 'm')]);
+        .flatMap((c: any) => {
+          try {
+            const pattern = c.rule.regex.replace(/\(\?[imsx]+\)/g, '');
+            return [[c, new RegExp(pattern, (c.rule.ignore_case ? 'i' : '') + 'm')]];
+          } catch (e) {
+            console.warn('Invalid category regex:', c.rule.regex, e);
+            return [];
+          }
+        });
 
       const catMap: Record<string, any> = {};
 
