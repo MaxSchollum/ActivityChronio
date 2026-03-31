@@ -204,6 +204,11 @@ div.chronio-view
                 @dragend="onDragEnd"
               )
                 .act-indent
+                span.act-expand(
+                  v-if="appNode.titles && appNode.titles.length"
+                  @click.stop="toggleExpandApp(catNode.catKey + '/' + appNode.app)"
+                ) {{ expandedApps[catNode.catKey + '/' + appNode.app] ? '▾' : '▸' }}
+                span.act-expand-spacer(v-else)
                 .act-app-icon(:style="{background: appNode.color}")
                 span.act-name {{ appNode.app }}
                 span.act-drag-hint ↖
@@ -2357,6 +2362,10 @@ export default {
   width: 12px;
   flex-shrink: 0;
   cursor: pointer;
+}
+.act-row--app .act-expand-spacer {
+  width: 12px;
+  flex-shrink: 0;
 }
 
 /* ── SCROLLBAR STYLING ───────────────────────────────────────────── */
