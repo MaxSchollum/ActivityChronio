@@ -1,15 +1,16 @@
 <template lang="pug">
 div#wrapper(v-if="loaded")
-  aw-header
-
-  div(:class="{'container': !fullContainer, 'container-fluid': fullContainer}").px-0.px-md-2
-    div.aw-container.my-sm-3.p-3
-      error-boundary
-        user-satisfaction-poll
-        new-release-notification(v-if="isNewReleaseCheckEnabled")
-        router-view
-
-  aw-footer
+  template(v-if="noShell")
+    router-view
+  template(v-else)
+    aw-header
+    div(:class="{'container': !fullContainer, 'container-fluid': fullContainer}").px-0.px-md-2
+      div.aw-container.my-sm-3.p-3
+        error-boundary
+          user-satisfaction-poll
+          new-release-notification(v-if="isNewReleaseCheckEnabled")
+          router-view
+    aw-footer
 </template>
 
 <script lang="ts">
@@ -32,6 +33,9 @@ export default {
   computed: {
     fullContainer() {
       return this.$route.meta.fullContainer;
+    },
+    noShell() {
+      return this.$route.meta.noShell;
     },
   },
 
