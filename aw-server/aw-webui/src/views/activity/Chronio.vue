@@ -1454,23 +1454,31 @@ export default {
           always_active_pattern: settingsStore.always_active_pattern,
         });
 
-        const windowBuckets = this.bucketsStore.bucketsWindow(this.host);
-        const afkBuckets = this.bucketsStore.bucketsAFK(this.host);
+        // Collect all same-machine hostname variants (exclude IP addresses and 'unknown')
+        const allHosts: string[] = (this.bucketsStore.hosts as string[])
+          .filter((h: string) => h && h !== 'unknown' && !/^\d+\.\d+\.\d+\.\d+$/.test(h));
+
+        const allWindowBuckets: string[] = allHosts.flatMap((h: string) => this.bucketsStore.bucketsWindow(h));
+        const allAfkBuckets: string[] = allHosts.flatMap((h: string) => this.bucketsStore.bucketsAFK(h));
+
         const startDate = moment(this.selectedDate).startOf('day').toDate();
         const endDate = moment(this.selectedDate).endOf('day').toDate();
         const params = { start: startDate, end: endDate, limit: -1 };
 
-        const [windowEvts, afkEvts] = await Promise.all([
-          windowBuckets.length > 0
-            ? getClient().getEvents(windowBuckets[0], params)
-            : Promise.resolve([]),
-          afkBuckets.length > 0
-            ? getClient().getEvents(afkBuckets[0], params)
-            : Promise.resolve([]),
-        ]);
+        // Fetch from all same-machine buckets in parallel and merge
+        const windowEvtArrays = await Promise.all(
+          allWindowBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
+        );
+        const afkEvtArrays = await Promise.all(
+          allAfkBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
+        );
 
-        this.windowEvents = windowEvts || [];
-        this.afkEvents = afkEvts || [];
+        // Merge and sort by timestamp descending
+        const mergeEvents = (arrays: any[][]) =>
+          arrays.flat().sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        this.windowEvents = mergeEvents(windowEvtArrays);
+        this.afkEvents = mergeEvents(afkEvtArrays);
         if (!silent) {
           this.loading = false;
           this.$nextTick(() => this.scrollTimeline());
