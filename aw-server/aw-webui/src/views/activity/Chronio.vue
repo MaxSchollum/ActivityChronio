@@ -1443,17 +1443,6 @@ export default {
         const settingsStore = this.settingsStore;
         const timeperiod = dateToTimeperiod(this.selectedDate, settingsStore.startOfDay);
 
-        // #35: don't force-reload the activity store on silent background refresh
-        await this.activityStore.ensure_loaded({
-          timeperiod,
-          host: this.host,
-          filter_afk: true,
-          include_audible: false,
-          include_stopwatch: false,
-          force: !silent,
-          always_active_pattern: settingsStore.always_active_pattern,
-        });
-
         // Collect all same-machine hostname variants (exclude IP addresses and 'unknown')
         const allHosts: string[] = (this.bucketsStore.hosts as string[])
           .filter((h: string) => h && h !== 'unknown' && !/^\d+\.\d+\.\d+\.\d+$/.test(h));
