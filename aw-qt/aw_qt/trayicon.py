@@ -55,9 +55,13 @@ def open_url(url: str) -> None:
         webbrowser.open(url)
 
 
+def chronio_dashboard_url(root_url: str) -> str:
+    return root_url.rstrip("/") + "/#/chronio"
+
+
 def open_webui(root_url: str) -> None:
     print("Opening dashboard")
-    open_url(root_url)
+    open_url(chronio_dashboard_url(root_url))
 
 
 def open_apibrowser(root_url: str) -> None:
@@ -104,7 +108,7 @@ class TrayIcon(QSystemTrayIcon):
     ) -> None:
         QSystemTrayIcon.__init__(self, icon, parent)
         self._parent = parent  # QSystemTrayIcon also tries to save parent info but it screws up the type info
-        self.setToolTip("ActivityWatch" + (" (testing)" if testing else ""))
+        self.setToolTip("Chronio" + (" (testing)" if testing else ""))
 
         self.manager = manager
         self.testing = testing
@@ -130,13 +134,13 @@ class TrayIcon(QSystemTrayIcon):
         self._update_tracking_status()
 
     def on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
-            open_webui(self.root_url)
-            return
         if reason in (
-            QSystemTrayIcon.ActivationReason.Context,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
             QSystemTrayIcon.ActivationReason.Trigger,
         ):
+            open_webui(self.root_url)
+            return
+        if reason == QSystemTrayIcon.ActivationReason.Context:
             self._show_menu()
 
     def _build_rootmenu(self) -> None:
@@ -170,11 +174,11 @@ class TrayIcon(QSystemTrayIcon):
         #   "it seems that the bug is also triggered when creating a QIcon with an invalid path"
         if exitIcon.availableSizes():
             self._quit_action = menu.addAction(
-                exitIcon, "Quit ActivityWatch", lambda: exit(self.manager)
+                exitIcon, "Quit Chronio", lambda: exit(self.manager)
             )
         else:
             self._quit_action = menu.addAction(
-                "Quit ActivityWatch", lambda: exit(self.manager)
+                "Quit Chronio", lambda: exit(self.manager)
             )
         menu.addSeparator()
         self._quit_action.setEnabled(True)
@@ -328,7 +332,7 @@ class TrayIcon(QSystemTrayIcon):
         if not state.get("server"):
             label = "Status: server offline"
             icon = self._icon_idle
-            tooltip = "ActivityWatch — server offline"
+            tooltip = "Chronio — server offline"
         else:
             if state.get("tracking"):
                 label = "Status: tracking"
@@ -341,7 +345,7 @@ class TrayIcon(QSystemTrayIcon):
                 icon = self._icon_idle
 
             tooltip = (
-                "ActivityWatch — "
+                "Chronio — "
                 + ("tracking" if state.get("tracking") else "not tracking")
                 + f" (afk: {'ok' if state.get('afk') else 'no'}, window: {'ok' if state.get('window') else 'no'})"
             )
@@ -444,11 +448,11 @@ def run(manager: Manager, testing: bool = False) -> Any:
         sys.exit(1)
 
     if sys.platform == "darwin":
-        icon = QIcon("icons:clockicon.png")
+        icon = QIcon("icons:black-monochrome-logo.png")
         # Allow macOS to use filters for changing the icon's color
         icon.setIsMask(True)
     else:
-        icon = QIcon("icons:clockicon.png")
+        icon = QIcon("icons:logo.png")
 
     trayIcon = TrayIcon(manager, icon, widget, testing=testing)
     trayIcon.show()

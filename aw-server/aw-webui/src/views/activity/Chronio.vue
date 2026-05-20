@@ -14,6 +14,8 @@ div.chronio-view
             type="date"
             :value="selectedDate"
             @input="onDateChange($event.target.value)"
+            @keydown.enter.prevent="onDateChange($event.target.value)"
+            @click.stop
             @blur="showDatePicker = false"
           )
         button.chronio-nav-btn(@click="nextDay" :disabled="isToday") &rarr;
@@ -186,8 +188,8 @@ div.chronio-view
     .chronio-center(@click.self="clearSelection")
       .center-header
         .center-title
-          | {{ selectedCatFilter && selectedCatFilter !== '__unassigned__' ? selectedCatFilter.split('>').pop() : 'All Activities' }}:&nbsp;
-          strong {{ totalTrackedTime }}
+          | {{ centerTitle }}:&nbsp;
+          strong {{ centerTrackedTime }}
         .view-toggle
           button(:class="{active: viewMode === 'unified'}" @click="viewMode = 'unified'") Unified
           button(:class="{active: viewMode === 'apps'}" @click="viewMode = 'apps'") Apps
@@ -219,13 +221,13 @@ div.chronio-view
                 draggable="true"
                 :class="{'row-selected': selectedRowKeys[appRowKey(catNode.catKey, appNode.app)]}"
                 @click="onUnifiedAppRowClick(catNode.catKey, appNode, $event)"
-                @dragstart="onDragStartApp(appNode, $event)"
+                @dragstart="onDragStartApp(appNode, $event, appRowKey(catNode.catKey, appNode.app))"
                 @dragend="onDragEnd"
               )
                 .act-indent
                 span.act-expand(v-if="appNode.titles && appNode.titles.length") {{ expandedApps[catNode.catKey + '/' + appNode.app] ? '▾' : '▸' }}
                 span.act-expand-spacer(v-else)
-                .act-app-icon(:style="{background: appNode.color}")
+                .act-app-icon(:style="{background: appNode.color}" :title="appNode.colorTitle")
                 span.act-name {{ appNode.app }}
                 span.act-drag-hint ↖
                 span.act-dur {{ formatDuration(appNode.duration) }}
@@ -234,8 +236,8 @@ div.chronio-view
                 .act-row.act-row--title(
                   draggable="true"
                   :class="{'row-selected': selectedRowKeys[titleRowKey(catNode.catKey, appNode.app, t.title)]}"
-                  @click="onActivityRowClick(titleRowKey(catNode.catKey, appNode.app, t.title), {type:'title', app: appNode.app, title: t.title, rawTitle: t.title}, $event)"
-                  @dragstart="onDragStartTitle(appNode.app, t, $event)"
+                  @click="onActivityRowClick(titleRowKey(catNode.catKey, appNode.app, t.title), {type:'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title}, $event)"
+                  @dragstart="onDragStartTitle(appNode.app, t, $event, titleRowKey(catNode.catKey, appNode.app, t.title))"
                   @dragend="onDragEnd"
                 )
                   .act-indent2
@@ -249,12 +251,12 @@ div.chronio-view
             .act-row.act-row--app(
               draggable="true"
               :class="{'row-selected': selectedRowKeys['flat/' + appNode.app]}"
-              @click="onActivityRowClick('flat/' + appNode.app, {type:'app', app: appNode.app, title: ''}, $event)"
-              @dragstart="onDragStartApp(appNode, $event)"
+              @click="onAppsAppRowClick(appNode, $event)"
+              @dragstart="onDragStartApp(appNode, $event, 'flat/' + appNode.app)"
               @dragend="onDragEnd"
             )
               span.act-expand(@click.stop="toggleExpandApp('flat/' + appNode.app)") {{ expandedApps['flat/' + appNode.app] ? '▾' : '▸' }}
-              .act-app-icon(:style="{background: appNode.color}")
+              .act-app-icon(:style="{background: appNode.color}" :title="appNode.colorTitle")
               span.act-name {{ appNode.app }}
               span.act-drag-hint ↖
               span.act-dur {{ formatDuration(appNode.duration) }}
@@ -262,8 +264,8 @@ div.chronio-view
               .act-row.act-row--title(
                 draggable="true"
                 :class="{'row-selected': selectedRowKeys['flat/' + appNode.app + '/' + t.title]}"
-                @click="onActivityRowClick('flat/' + appNode.app + '/' + t.title, {type:'title', app: appNode.app, title: t.title, rawTitle: t.title}, $event)"
-                @dragstart="onDragStartTitle(appNode.app, t, $event)"
+                @click="onActivityRowClick('flat/' + appNode.app + '/' + t.title, {type:'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title}, $event)"
+                @dragstart="onDragStartTitle(appNode.app, t, $event, 'flat/' + appNode.app + '/' + t.title)"
                 @dragend="onDragEnd"
               )
                 .act-indent2
@@ -279,16 +281,20 @@ div.chronio-view
               @click="toggleChronoBlock(group.key)"
             )
               span.act-caret {{ expandedTimelineBlocks[group.key] ? '▾' : '▸' }}
-              .act-app-icon(:style="{background: group.color}")
+              .act-app-icon(:style="{background: group.color}" :title="group.colorTitle")
               span.act-app {{ group.label }}
               span.act-time-range {{ group.range }}
               span.act-dur {{ formatDuration((group.endMs - group.startMs) / 1000) }}
 
             template(v-if="expandedTimelineBlocks[group.key]" v-for="e in group.subEvents" :key="e.timestamp + e.data.title")
-              .act-row.act-row--chrono-sub
+              .act-row.act-row--chrono-sub(
+                draggable="true"
+                @dragstart="onDragStartEvent(e, $event)"
+                @dragend="onDragEnd"
+              )
                 .act-indent
-                span.act-app-label {{ e.data.app }}:
-                span.act-title(:title="e.data.title") {{ cleanTitle(e.data.title || '', e.data.app || '') }}
+                span.act-app-label {{ displayEventApp(e) }}:
+                span.act-title(:title="displayEventTitle(e)") {{ displayEventTitle(e) }}
                 span.act-time {{ formatHHMM(e.timestamp) }}
                 span.act-dur {{ formatDuration(e.duration) }}
 
@@ -368,10 +374,6 @@ const COLOR_SWATCHES = [
   '#14b8a6', '#ef4444', '#84cc16', '#f97316', '#64748b',
 ];
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 const GRADIENTS: string[] = [
   'linear-gradient(135deg, #3c7bff, #5aa1ff)',
   'linear-gradient(135deg, #8a3bff, #c04cff)',
@@ -390,6 +392,23 @@ const MAX_MERGE_GAP_MS = 15 * 60 * 1000; // don't merge same-app blocks separate
 const BROWSER_SUFFIXES = [
   'Google Chrome', 'Chrome', 'Safari', 'Firefox', 'Arc',
   'Brave Browser', 'Microsoft Edge', 'Opera',
+];
+
+const BROWSER_APP_NAMES = new Set(BROWSER_SUFFIXES);
+
+const KNOWN_BROWSER_SITES: { label: string; patterns: RegExp[] }[] = [
+  { label: 'ChatGPT', patterns: [/chatgpt/i, /openai/i] },
+  { label: 'X / Twitter', patterns: [/(^|\W)x\.com($|\W)/i, /twitter/i, /\bX\b/] },
+  { label: 'GitHub', patterns: [/github/i] },
+  { label: 'YouTube', patterns: [/youtube/i] },
+  { label: 'Gmail', patterns: [/gmail/i] },
+  { label: 'Google Docs', patterns: [/google docs/i, /docs\.google/i] },
+  { label: 'Google Calendar', patterns: [/google calendar/i, /calendar\.google/i] },
+  { label: 'Reddit', patterns: [/reddit/i] },
+  { label: 'Slack', patterns: [/slack/i] },
+  { label: 'Notion', patterns: [/notion/i] },
+  { label: 'Linear', patterns: [/linear/i] },
+  { label: 'Codex', patterns: [/\bcodex\b/i] },
 ];
 
 function formatDuration(seconds: number): string {
@@ -442,6 +461,7 @@ export default {
       COLOR_SWATCHES: COLOR_SWATCHES,
       // drag-drop state (#3)
       dragOverCatKey: null as string | null,
+      isDraggingActivity: false as boolean,
       // multi-select state (#37)
       selectedRowKeys: {} as Record<string, boolean>,
       selectedRowPayloads: {} as Record<string, any>,
@@ -515,16 +535,27 @@ export default {
       if (intervals.length === 0) {
         return events.filter((e: any) => !SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app));
       }
-      return events.filter((e: any) => {
-        if (SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app)) return false;
+      const segments: any[] = [];
+      for (const e of events) {
+        if (SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app)) continue;
         const eStart = moment(e.timestamp).valueOf();
         const eEnd = eStart + e.duration * 1000;
-        const totalNotAfk = intervals.reduce((sum: number, iv: any) => {
-          return sum + Math.max(0, Math.min(eEnd, iv.end) - Math.max(eStart, iv.start));
-        }, 0);
         const eventDur = eEnd - eStart;
-        return totalNotAfk > 0 && totalNotAfk / eventDur > 0.1;
-      });
+        if (eventDur <= 0) continue;
+
+        for (const iv of intervals) {
+          const start = Math.max(eStart, iv.start);
+          const end = Math.min(eEnd, iv.end);
+          const durationMs = end - start;
+          if (durationMs <= 1000) continue;
+          segments.push({
+            ...e,
+            timestamp: moment(start).toISOString(),
+            duration: durationMs / 1000,
+          });
+        }
+      }
+      return segments;
     },
 
     afkStatus(): 'active' | 'no-data' {
@@ -569,6 +600,32 @@ export default {
       return formatDuration(total);
     },
 
+    scopedActiveWindowEvents(): any[] {
+      let events: any[] = this.activeWindowEvents;
+      if (this.selectedCatFilter === '__unassigned__') {
+        events = events.filter((e: any) => this.classifyEventCategory(e)[0] === 'Uncategorized');
+      } else if (this.selectedCatFilter) {
+        const selected = this.selectedCatFilter;
+        events = events.filter((e: any) => {
+          const key = this.classifyEventCategory(e).join('>');
+          return key === selected || key.startsWith(selected + '>');
+        });
+      }
+      return events;
+    },
+
+    centerTitle(): string {
+      if (this.selectedCatFilter === '__unassigned__') return 'Uncategorized';
+      return this.selectedCatFilter ? this.selectedCatFilter.split('>').pop() || 'All Activities' : 'All Activities';
+    },
+
+    centerTrackedTime(): string {
+      const total = (this.scopedActiveWindowEvents as any[]).reduce(
+        (sum: number, e: any) => sum + (e.duration || 0), 0
+      );
+      return formatDuration(total);
+    },
+
     // ─── ACTIVITIES TREE ─────────────────────────────────────────────
     // Builds category → app → title hierarchy from AFK-filtered events
     activitiesTree(): any[] {
@@ -591,17 +648,14 @@ export default {
       const catMap: Record<string, any> = {};
 
       for (const e of events) {
-        const app: string = e.data?.app || 'Unknown';
+        const identity = this.eventIdentity(e);
+        const app: string = identity.app;
         const rawTitle: string = e.data?.title || '';
-        const title: string = this.cleanTitle(rawTitle, app);
+        const title: string = identity.title;
         const dur: number = e.duration || 0;
 
-        // Classify: app name + raw title
-        const str = app + '\n' + rawTitle;
-        const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
-        const catName: string[] = matches.length > 0
-          ? (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name
-          : ['Uncategorized'];
+        const manualCat = this.matchManualCategory(identity, categories);
+        const catName: string[] = manualCat || this.matchRegexCategory(identity.matchText, regexes);
         const catKey = catName.join('>');
 
         if (!catMap[catKey]) {
@@ -619,14 +673,17 @@ export default {
         if (!catMap[catKey].apps[app]) {
           catMap[catKey].apps[app] = {
             app,
-            color: getColorFromString(app),
+            color: catMap[catKey].color,
+            colorTitle: 'Category: ' + catName.join(' > '),
             duration: 0,
-            titles: {} as Record<string, number>,
+            titles: {} as Record<string, any>,
           };
         }
         catMap[catKey].apps[app].duration += dur;
-        catMap[catKey].apps[app].titles[title] =
-          (catMap[catKey].apps[app].titles[title] || 0) + dur;
+        if (!catMap[catKey].apps[app].titles[title]) {
+          catMap[catKey].apps[app].titles[title] = { title, rawTitle, duration: 0 };
+        }
+        catMap[catKey].apps[app].titles[title].duration += dur;
       }
 
       return Object.values(catMap)
@@ -637,9 +694,8 @@ export default {
             .sort((a: any, b: any) => b.duration - a.duration)
             .map((app: any) => ({
               ...app,
-              titles: Object.entries(app.titles as Record<string, number>)
-                .sort(([, a], [, b]) => (b as number) - (a as number))
-                .map(([title, dur]) => ({ title, duration: dur })),
+              titles: Object.values(app.titles as Record<string, any>)
+                .sort((a: any, b: any) => b.duration - a.duration),
             })),
         }));
     },
@@ -727,7 +783,10 @@ export default {
         }
       };
 
-      flatten(catStore.classes_hierarchy, 0);
+      flatten(
+        catStore.classes_hierarchy.filter((cat: any) => cat.name.join('>') !== 'Uncategorized'),
+        0
+      );
 
       // Inject inline-create row at the right position (#38)
       if (this.inlineCreateParent !== null) {
@@ -765,9 +824,24 @@ export default {
       for (const cat of this.filteredActivitiesTree as any[]) {
         for (const appNode of cat.apps) {
           if (!appMap[appNode.app]) {
-            appMap[appNode.app] = { app: appNode.app, color: appNode.color, duration: 0, titles: [] as any[] };
+            appMap[appNode.app] = {
+              app: appNode.app,
+              color: appNode.color,
+              colorTitle: appNode.colorTitle,
+              duration: 0,
+              titles: [] as any[],
+              categories: {} as Record<string, { duration: number; color: string; title: string }>,
+            };
           }
           appMap[appNode.app].duration += appNode.duration;
+          if (!appMap[appNode.app].categories[cat.catKey]) {
+            appMap[appNode.app].categories[cat.catKey] = {
+              duration: 0,
+              color: cat.color,
+              title: 'Category: ' + cat.category.join(' > '),
+            };
+          }
+          appMap[appNode.app].categories[cat.catKey].duration += appNode.duration;
           for (const t of appNode.titles) {
             const existing = appMap[appNode.app].titles.find((x: any) => x.title === t.title);
             if (existing) existing.duration += t.duration;
@@ -777,7 +851,15 @@ export default {
       }
       return Object.values(appMap)
         .sort((a: any, b: any) => b.duration - a.duration)
-        .map((a: any) => ({ ...a, titles: [...a.titles].sort((x: any, y: any) => y.duration - x.duration) }));
+        .map((a: any) => {
+          const dominant = _.maxBy(Object.values(a.categories), (c: any) => c.duration) as any;
+          return {
+            ...a,
+            color: dominant ? dominant.color : a.color,
+            colorTitle: dominant ? dominant.title : a.colorTitle,
+            titles: [...a.titles].sort((x: any, y: any) => y.duration - x.duration),
+          };
+        });
     },
 
     // #37: ordered list of visible row keys for shift-range select
@@ -793,7 +875,7 @@ export default {
               for (const t of appNode.titles) {
                 result.push({
                   key: this.titleRowKey(catNode.catKey, appNode.app, t.title),
-                  payload: { type: 'title', app: appNode.app, title: t.title, rawTitle: t.title },
+                  payload: { type: 'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title },
                 });
               }
             }
@@ -806,7 +888,7 @@ export default {
             for (const t of appNode.titles) {
               result.push({
                 key: 'flat/' + appNode.app + '/' + t.title,
-                payload: { type: 'title', app: appNode.app, title: t.title, rawTitle: t.title },
+                payload: { type: 'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title },
               });
             }
           }
@@ -828,7 +910,7 @@ export default {
 
     // Timeline: merge consecutive same-app events, full day
     timeline(): any[] {
-      const events: any[] = this.activeWindowEvents;
+      const events: any[] = this.scopedActiveWindowEvents;
       if (!events.length) return [];
 
       // Apply search filter to timeline too
@@ -849,7 +931,8 @@ export default {
       const merged1: any[] = [];
       let current: any = null;
       for (const e of sorted) {
-        const app: string = e.data?.app || 'Unknown';
+        const identity = this.eventIdentity(e);
+        const app: string = identity.app;
         const eStart = moment(e.timestamp).valueOf();
         const gapMs = current ? eStart - current.end.valueOf() : Infinity;
         if (current && current.app === app && gapMs < MAX_MERGE_GAP_MS) {
@@ -865,6 +948,7 @@ export default {
           end: moment(e.timestamp).add(e.duration, 'seconds'),
           duration: e.duration,
           event: e,
+          category: this.classifyEventCategory(e),
         };
       }
       if (current) merged1.push(current);
@@ -876,13 +960,16 @@ export default {
         const prev = blocks.length > 0 ? blocks[blocks.length - 1] : null;
         if (b.duration < 30 && prev && prev.app !== b.app) {
           const next = i + 1 < merged1.length ? merged1[i + 1] : null;
-          if (next && next.app === prev.app) {
+          const prevGap = b.start.valueOf() - prev.end.valueOf();
+          const nextGap = next ? next.start.valueOf() - b.end.valueOf() : Infinity;
+          if (next && next.app === prev.app && prevGap < MAX_MERGE_GAP_MS && nextGap < MAX_MERGE_GAP_MS) {
             prev.end = b.end;
             prev.duration += b.duration;
             continue;
           }
         }
-        if (prev && prev.app === b.app) {
+        const gapMs = prev ? b.start.valueOf() - prev.end.valueOf() : Infinity;
+        if (prev && prev.app === b.app && gapMs < MAX_MERGE_GAP_MS) {
           prev.end = b.end;
           prev.duration += b.duration;
         } else {
@@ -898,7 +985,7 @@ export default {
         .map((b: any) => {
           if (!(b.app in appIndexMap)) appIndexMap[b.app] = idx++;
           // Use category color if available, else fall back to gradient
-          const catColor = catColors[b.app];
+          const catColor = (this.categoryStore as any).get_category_color(b.category || ['Uncategorized']) || catColors[b.app];
           const color = catColor
             ? catColor
             : gradientForApp(b.app, appIndexMap[b.app]);
@@ -906,6 +993,7 @@ export default {
             label: b.app,
             range: formatHHMM(b.start.toISOString()) + ' – ' + formatHHMM(b.end.toISOString()),
             color,
+            colorTitle: 'Category: ' + (b.category || ['Uncategorized']).join(' > '),
             event: b.event,
             startMs: b.start.valueOf(),
             endMs: b.end.valueOf(),
@@ -966,7 +1054,7 @@ export default {
     // Chronological view: timeline blocks as top-level rows, individual events nested inside
     chronoGrouped(): any[] {
       const blocks: any[] = this.timeline as any[];
-      const allEvents: any[] = this.activeWindowEvents;
+      const allEvents: any[] = this.scopedActiveWindowEvents;
       const q = this.searchQuery.toLowerCase();
 
       return blocks
@@ -985,7 +1073,7 @@ export default {
 
     // Flat chronological event list for the chrono view
     chronoEvents(): any[] {
-      const events: any[] = this.activeWindowEvents;
+      const events: any[] = this.scopedActiveWindowEvents;
       if (!events.length) return [];
 
       let filtered = events;
@@ -1006,17 +1094,13 @@ export default {
         .sort((a: any, b: any) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf())
         .filter((e: any) => (e.duration || 0) >= 5)
         .map((e: any) => {
-          const app: string = e.data?.app || 'Unknown';
-          const rawTitle: string = e.data?.title || '';
-          const str = app + '\n' + rawTitle;
-          const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
-          const catName: string[] = matches.length > 0
-            ? (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name
-            : ['Uncategorized'];
+          const identity = this.eventIdentity(e);
+          const app: string = identity.app;
+          const catName = this.matchManualCategory(identity, categories) || this.matchRegexCategory(identity.matchText, regexes);
           return {
             ts: e.timestamp,
             app,
-            title: this.cleanTitle(rawTitle, app),
+            title: identity.title,
             timeStr: formatHHMM(e.timestamp),
             duration: e.duration,
             catColor: (this.categoryStore as any).get_category_color(catName),
@@ -1037,6 +1121,155 @@ export default {
     },
     formatHHMM(ts: any): string {
       return formatHHMM(ts);
+    },
+
+    normalizeTitleForMatching(title: string): string {
+      return (title || '')
+        .replace(/^\s*(?:\(\d+\)|\[\d+\]|\d+)\s+/, '')
+        .trim();
+    },
+
+    isBrowserApp(app: string): boolean {
+      return BROWSER_APP_NAMES.has(app);
+    },
+
+    browserSiteFor(title: string, url: string): { label: string; pageTitle: string } | null {
+      const normalized = this.normalizeTitleForMatching(title);
+      let host = '';
+      if (url) {
+        try {
+          host = new URL(url).host.replace(/^www\./, '');
+        } catch (e) {
+          host = url;
+        }
+      }
+      const haystack = [normalized, host, url].filter(Boolean).join('\n');
+      const site = KNOWN_BROWSER_SITES.find((s: any) => s.patterns.some((re: RegExp) => re.test(haystack)));
+      if (!site) return null;
+
+      const parts = normalized.split(/\s+(?:-|—|\|)\s+/).filter(Boolean);
+      let pageTitle = normalized;
+      if (parts.length > 1) {
+        const first = parts[0];
+        const last = parts[parts.length - 1];
+        if (site.patterns.some((re: RegExp) => re.test(last))) {
+          pageTitle = parts.slice(0, -1).join(' - ');
+        } else if (site.patterns.some((re: RegExp) => re.test(first))) {
+          pageTitle = parts.slice(1).join(' - ');
+        }
+      }
+
+      return { label: site.label, pageTitle: pageTitle || site.label };
+    },
+
+    eventIdentity(e: any): any {
+      const rawApp: string = e.data?.app || 'Unknown';
+      const rawTitle: string = e.data?.title || '';
+      const url: string = e.data?.url || '';
+      const readableTitle = this.cleanTitle(rawTitle, rawApp);
+      const normalizedTitle = this.normalizeTitleForMatching(readableTitle);
+
+      if (this.isBrowserApp(rawApp)) {
+        const site = this.browserSiteFor(readableTitle, url);
+        if (site) {
+          const title = site.pageTitle && site.pageTitle !== site.label ? site.pageTitle : normalizedTitle;
+          return {
+            rawApp,
+            app: site.label,
+            title: title || site.label,
+            rawTitle,
+            url,
+            matchText: [site.label, title, normalizedTitle, rawTitle, url].filter(Boolean).join('\n'),
+          };
+        }
+      }
+
+      const app = rawApp === 'Unknown' && normalizedTitle ? normalizedTitle : rawApp;
+      return {
+        rawApp,
+        app,
+        title: normalizedTitle || app,
+        rawTitle,
+        url,
+        matchText: [app, normalizedTitle, rawTitle, url].filter(Boolean).join('\n'),
+      };
+    },
+
+    displayEventApp(e: any): string {
+      return this.eventIdentity(e).app;
+    },
+
+    displayEventTitle(e: any): string {
+      return this.eventIdentity(e).title;
+    },
+
+    matchRegexCategory(str: string, regexes: [any, RegExp][]): string[] {
+      const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
+      return matches.length > 0
+        ? (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name
+        : ['Uncategorized'];
+    },
+
+    manualRuleMatches(identity: any, rule: any): boolean {
+      if (!rule) return false;
+      const app = (rule.app || '').toLowerCase();
+      const title = this.normalizeTitleForMatching(rule.title || rule.rawTitle || '').toLowerCase();
+      if (rule.type === 'app') return app && identity.app.toLowerCase() === app;
+      return app && title &&
+        identity.app.toLowerCase() === app &&
+        this.normalizeTitleForMatching(identity.title || '').toLowerCase() === title;
+    },
+
+    matchManualCategory(identity: any, categories: any[]): string[] | null {
+      const matches = categories.filter((c: any) =>
+        (c.data?.chronioManualRules || []).some((rule: any) => this.manualRuleMatches(identity, rule))
+      );
+      if (!matches.length) return null;
+      return (_.maxBy(matches, (c: any) => c.name.length) as any).name;
+    },
+
+    manualRuleKey(rule: any): string {
+      const type = rule?.type === 'app' ? 'app' : 'title';
+      const app = (rule?.app || '').toLowerCase();
+      const title = this.normalizeTitleForMatching(rule?.title || rule?.rawTitle || '').toLowerCase();
+      return [type, app, title].join('\u0000');
+    },
+
+    addManualCategorizationRule(targetCat: any, rule: any, catStore: any) {
+      const key = this.manualRuleKey(rule);
+      const targetKey = targetCat.name.join('>');
+      for (const cat of catStore.classes) {
+        const existingRules = cat.data?.chronioManualRules || [];
+        const nextRules = existingRules.filter((existing: any) => this.manualRuleKey(existing) !== key);
+        if (cat.name.join('>') === targetKey) {
+          nextRules.push(rule);
+        }
+        const changed = nextRules.length !== existingRules.length || cat.name.join('>') === targetKey;
+        if (changed) {
+          catStore.updateClass({
+            ...cat,
+            data: { ...(cat.data || {}), chronioManualRules: nextRules },
+          });
+        }
+      }
+    },
+
+    classifyEventCategory(e: any): string[] {
+      const categories: any[] = (this.categoryStore as any).classes;
+      const identity = this.eventIdentity(e);
+      const manual = this.matchManualCategory(identity, categories);
+      if (manual) return manual;
+      const regexes: [any, RegExp][] = categories
+        .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
+        .flatMap((c: any) => {
+          try {
+            const pattern = c.rule.regex.replace(/\(\?[imsx]+\)/g, '');
+            return [[c, new RegExp(pattern, (c.rule.ignore_case ? 'i' : '') + 'm')]];
+          } catch (err) {
+            return [];
+          }
+        });
+      return this.matchRegexCategory(identity.matchText, regexes);
     },
 
     // Strip browser name suffix from window titles for better readability
@@ -1236,30 +1469,48 @@ export default {
     },
 
     // ─── DRAG-TO-CATEGORIZE (#3) ──────────────────────────────────
-    onDragStartApp(appNode: any, evt: DragEvent) {
+    onDragStartApp(appNode: any, evt: DragEvent, rowKey = '') {
       // #43: log to aid debugging
+      this.isDraggingActivity = true;
       const selected = Object.values(this.selectedRowPayloads as Record<string, any>);
-      const items = selected.length > 0 ? selected : [{ type: 'app', app: appNode.app, title: '', rawTitle: '' }];
+      const items = rowKey && this.selectedRowKeys[rowKey] && selected.length > 0
+        ? selected
+        : [{ type: 'app', app: appNode.app, title: '', rawTitle: '' }];
       const payload = JSON.stringify(items);
       evt.dataTransfer!.setData('application/chronio', payload);
       evt.dataTransfer!.effectAllowed = 'copy';
       console.warn('[Chronio] dragstart app', appNode.app, 'items:', items.length);
     },
 
-    onDragStartTitle(app: string, t: any, evt: DragEvent) {
+    onDragStartTitle(app: string, t: any, evt: DragEvent, rowKey = '') {
+      this.isDraggingActivity = true;
       // If items are selected and this row is among them, drag all selected
       const selected = Object.values(this.selectedRowPayloads as Record<string, any>);
-      const items = selected.length > 0
+      const items = rowKey && this.selectedRowKeys[rowKey] && selected.length > 0
         ? selected
-        : [{ type: 'title', app, title: t.title, rawTitle: t.title }];
+        : [{ type: 'title', app, title: t.title, rawTitle: t.rawTitle || t.title }];
       evt.dataTransfer!.setData('application/chronio', JSON.stringify(items));
       evt.dataTransfer!.effectAllowed = 'copy';
       console.warn('[Chronio] dragstart title', t.title, 'items:', items.length);
     },
 
+    onDragStartEvent(e: any, evt: DragEvent) {
+      this.isDraggingActivity = true;
+      const identity = this.eventIdentity(e);
+      const payload = [{
+        type: 'title',
+        app: identity.app,
+        title: identity.title,
+        rawTitle: identity.rawTitle || identity.title,
+      }];
+      evt.dataTransfer!.setData('application/chronio', JSON.stringify(payload));
+      evt.dataTransfer!.effectAllowed = 'copy';
+    },
+
     onDragEnd() {
       // Clean up any drag state
       this.dragOverCatKey = null;
+      setTimeout(() => { this.isDraggingActivity = false; }, 0);
     },
 
     onDropToCategory(row: any, evt: DragEvent) {
@@ -1285,13 +1536,15 @@ export default {
       } catch { return; }
 
       for (const payload of items) {
-        let pattern: string;
-        if (payload.type === 'app') {
-          pattern = '(?m)^' + escapeRegex(payload.app) + '$';
-        } else {
-          pattern = escapeRegex(payload.title);
-        }
-        catStore.appendClassRule(cat.id, pattern);
+        const rule = payload.type === 'app'
+          ? { type: 'app', app: payload.app }
+          : {
+              type: 'title',
+              app: payload.app,
+              title: payload.title,
+              rawTitle: payload.rawTitle || payload.title,
+            };
+        this.addManualCategorizationRule(cat, rule, catStore);
       }
       catStore.save();
       this.clearSelection();
@@ -1378,11 +1631,22 @@ export default {
 
     // Unified view app rows: modifier key → multiselect, plain click → expand toggle
     onUnifiedAppRowClick(catKey: string, appNode: any, evt: MouseEvent) {
+      if (this.isDraggingActivity) return;
       if (evt.metaKey || evt.ctrlKey || evt.shiftKey) {
         const key = this.appRowKey(catKey, appNode.app);
         this.onActivityRowClick(key, { type: 'app', app: appNode.app, title: '' }, evt);
       } else {
         this.toggleExpandApp(catKey + '/' + appNode.app);
+      }
+    },
+
+    onAppsAppRowClick(appNode: any, evt: MouseEvent) {
+      if (this.isDraggingActivity) return;
+      const key = 'flat/' + appNode.app;
+      if (evt.metaKey || evt.ctrlKey || evt.shiftKey) {
+        this.onActivityRowClick(key, { type: 'app', app: appNode.app, title: '' }, evt);
+      } else {
+        this.toggleExpandApp(key);
       }
     },
 
