@@ -1,5 +1,5 @@
 <template lang="pug">
-div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
+div.chronio-view
   .chronio-topbar
     .chronio-brand
       .chronio-logo
@@ -20,12 +20,8 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
       .chronio-metric
         span.label Tracked:
         span.value {{ totalTrackedTime }}
-      .chronio-metric
-        span.label Productivity:
-        span.value(v-if="productivityDisplay.show" :class="productivityDisplay.colorClass") {{ productivityDisplay.text }}
-        template(v-else)
-          span.value.prod-muted —
-          span.prod-hint(title="Right-click a category and mark it Productive to see your score") ?
+      .chronio-afk-badge(:class="afkStatus" :title="afkStatus === 'active' ? 'AFK idle detection active' : 'No AFK data — idle time not filtered'")
+        | {{ afkStatus === 'active' ? 'AFK ✓' : 'AFK ⚠' }}
       .chronio-search
         input(type="text" placeholder="Search…" v-model="searchQuery")
 
@@ -38,8 +34,8 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
     .chronio-sidebar
       nav.sidebar-nav
         .sidebar-nav-item.active Activities
-        .sidebar-nav-item.disabled(title="Coming in V2") Stats
-        .sidebar-nav-item.disabled(title="Coming in V2") Reports
+        .sidebar-nav-item Stats
+        .sidebar-nav-item Reports
 
       .sidebar-tree
         .sidebar-summary-row(
@@ -52,104 +48,159 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
           @click="selectedCatFilter = '__unassigned__'"
           :class="{active: selectedCatFilter === '__unassigned__'}"
         )
-          span.sr-name Uncategorized
+          span.sr-name Unassigned
           span.sr-time {{ unassignedTime }}
 
         .sidebar-divider
 
         .sidebar-section-header
-          span Private
-          button.sidebar-add-btn(@click.stop="startInlineCreate(null)") +
-
-        //- Inline input for new top-level category
-        .sidebar-inline-input(v-if="inlineInput && inlineInput.mode === 'create' && !inlineInput.parentKey")
-          input.sidebar-inline-field(
-            ref="inlineFieldTop"
-            v-model="inlineInput.value"
-            @keydown.enter="confirmInlineInput"
-            @keydown.esc.stop="cancelInlineInput"
-            @blur="cancelInlineInput"
-            placeholder="Category name…"
-          )
+          span Projects
+          button.sidebar-add-btn(@click.stop="createTopCategory") +
 
         template(v-for="row in sidebarFlatTree" :key="row.key")
-          .sidebar-cat-row(
+          //- Inline-create row (#38)
+          .sidebar-inline-create(
+            v-if="row.isInlineCreate"
             :style="{paddingLeft: (row.depth * 14 + 10) + 'px'}"
-            :class="{active: selectedCatFilter === row.key, 'drop-target': dropTarget === row.key, 'drop-success': dropSuccess === row.key}"
-            @click="selectedCatFilter = row.key"
-            @contextmenu.prevent="openContextMenu(row, $event)"
-            @dragover.prevent="onDragOver(row.key)"
-            @dragleave="onDragLeave(row.key)"
-            @drop.prevent="onDrop($event, row)"
           )
-            button.sr-expand-btn(
-              v-if="row.hasChildren"
-              @click.stop="toggleSidebarNode(row.key)"
-            ) {{ sidebarExpanded[row.key] ? '▾' : '▸' }}
+            span.sr-expand-spacer
+            .sr-dot(:style="{background: '#4b8bff'}")
+            input.sr-rename-input(
+              ref="inlineCreateInput"
+              :value="inlineCreateValue"
+              placeholder="Name…"
+              @input="inlineCreateValue = $event.target.value"
+              @keydown.enter.prevent="commitInlineCreate"
+              @keydown.escape.prevent="cancelInlineCreate"
+              @blur="cancelInlineCreate"
+              @click.stop
+            )
+
+          //- Normal category row
+          .sidebar-cat-row(
+            v-else
+            draggable="true"
+            :style="{paddingLeft: (row.depth * 14 + 10) + 'px'}"
+            :class="{active: selectedCatFilter === row.key, 'drop-target': dragOverCatKey === row.key}"
+            @click="onSidebarRowClick(row)"
+            @dblclick.stop="startRename(row)"
+            @contextmenu.prevent="onSidebarRowRightClick(row, $event)"
+            @dragstart="onSidebarDragStart(row, $event)"
+            @dragenter.prevent="onSidebarDragOver(row, $event)"
+            @dragover.prevent="onSidebarDragOver(row, $event)"
+            @dragleave="dragOverCatKey = null"
+            @drop.prevent="onSidebarDrop(row, $event)"
+          )
+            span.sr-expand-btn(v-if="row.hasChildren" @click.stop="toggleSidebarExpand(row)") {{ sidebarExpanded[row.key] ? '▾' : '▸' }}
             span.sr-expand-spacer(v-else)
             .sr-dot(
               :style="{background: row.color}"
               @click.stop="openColorPicker(row, $event)"
             )
-            span.sr-name {{ row.label }}
-            span.sr-drop-label(v-if="dropTarget === row.key") → {{ row.label }}
-            span.sr-time(v-if="dropTarget !== row.key") {{ row.time }}
-          //- Inline input for sub-category or rename
-          .sidebar-inline-input(
-            v-if="inlineInput && inlineInput.parentKey === row.key && (inlineInput.mode === 'createSub' || inlineInput.mode === 'rename')"
-            :style="{paddingLeft: ((row.depth + (inlineInput.mode === 'createSub' ? 1 : 0)) * 14 + 10) + 'px'}"
-          )
-            input.sidebar-inline-field(
-              ref="inlineFieldNested"
-              v-model="inlineInput.value"
-              @keydown.enter="confirmInlineInput"
-              @keydown.esc.stop="cancelInlineInput"
-              @blur="cancelInlineInput"
-              placeholder="Name…"
+            input.sr-rename-input(
+              v-if="renamingKey === row.key"
+              ref="renameInput"
+              :value="renameValue"
+              @input="renameValue = $event.target.value"
+              @keydown.enter.prevent="commitRename(row)"
+              @keydown.escape.prevent="cancelRename"
+              @blur="cancelRename"
+              @click.stop
             )
+            span.sr-name(v-else) {{ row.label }}
+            span.sr-score-dot(
+              v-if="row.score !== 0"
+              :class="row.score > 0 ? 'score-productive' : 'score-distracting'"
+              :title="row.score > 0 ? 'Productive' : 'Distracting'"
+            )
+            span.sr-time {{ row.time }}
+            span.sr-drag-handle(
+              draggable="true"
+              @dragstart.stop="onHandleDragStart(row, $event)"
+              @click.stop
+              title="Drag to reorder"
+            ) ⠿
 
-      //- Context menu
-      .ctx-menu(
-        v-if="contextMenu"
-        :style="{left: contextMenu.x + 'px', top: contextMenu.y + 'px'}"
-        @click.stop
-      )
-        .ctx-item(@click="ctxAddSub") Add subcategory
-        .ctx-item(@click="ctxRename") Rename
-        .ctx-item(@click="ctxSetScore(10)") {{ contextMenu.row && getCatScore(contextMenu.row.key) === 10 ? '✓ ' : '' }}Productive
-        .ctx-item(@click="ctxSetScore(0)") {{ contextMenu.row && getCatScore(contextMenu.row.key) === 0 ? '✓ ' : '' }}Neutral
-        .ctx-item(@click="ctxSetScore(-10)") {{ contextMenu.row && getCatScore(contextMenu.row.key) === -10 ? '✓ ' : '' }}Distracting
-        .ctx-divider
-        .ctx-item.ctx-danger(@click="ctxDelete") Delete
+        //- Mini calendar (#52)
+        .sidebar-calendar
+          .cal-header
+            button.cal-nav(@click="prevCalMonth") ‹
+            span.cal-title {{ calendarMonthLabel }}
+            button.cal-nav(@click="nextCalMonth") ›
+          .cal-grid
+            span.cal-dow(v-for="(d, i) in ['S','M','T','W','T','F','S']" :key="i") {{ d }}
+            .cal-day(
+              v-for="cell in calendarDays"
+              :key="cell.key"
+              :class="{ 'in-month': cell.inMonth, 'is-today': cell.isToday, 'is-selected': cell.isSelected, 'has-data': cell.hasData }"
+              @click="cell.inMonth && onDateChange(cell.date)"
+            )
+              span(v-if="cell.inMonth") {{ cell.day }}
+              .cal-dot(v-if="cell.hasData && cell.inMonth")
 
-      //- Color picker popover
-      .color-picker-popover(
-        v-if="colorPicker"
-        :style="{left: colorPicker.x + 'px', top: colorPicker.y + 'px'}"
-        @click.stop
-      )
-        .color-swatch(
-          v-for="c in presetColors"
-          :key="c"
-          :style="{background: c}"
-          :class="{active: c === colorPicker.currentColor}"
-          @click="pickColor(c)"
+        //- Context menu
+        .sidebar-ctx-menu(
+          v-if="ctxMenu"
+          :style="{top: ctxMenu.y + 'px', left: ctxMenu.x + 'px'}"
+          @click.stop
         )
-        .color-custom
-          label Custom:
-          input.color-input(type="color" :value="colorPicker.currentColor || '#4b8bff'" @input="pickColor($event.target.value)")
+          .ctx-item(@click="startRename(ctxMenu.row)") Rename
+          .ctx-item(@click="createChildCategory(ctxMenu.row)") Add subcategory
+          .ctx-divider
+          .ctx-score-row
+            span Score:
+            button.ctx-score-btn(
+              :class="{active: ctxMenu.row.score > 0}"
+              @click="setCategoryScore(ctxMenu.row, 10)"
+            ) Productive
+            button.ctx-score-btn.neutral(
+              :class="{active: ctxMenu.row.score === 0}"
+              @click="setCategoryScore(ctxMenu.row, 0)"
+            ) Neutral
+            button.ctx-score-btn.distracting(
+              :class="{active: ctxMenu.row.score < 0}"
+              @click="setCategoryScore(ctxMenu.row, -10)"
+            ) Distracting
+          .ctx-divider
+          .ctx-item.ctx-danger(@click="deleteCategory(ctxMenu.row)") Delete
+
+        //- Color picker popover (#7)
+        .color-picker-popover(
+          v-if="colorPickerRow"
+          :style="{top: colorPickerPos.y + 'px', left: colorPickerPos.x + 'px'}"
+          @click.stop
+        )
+          .cp-swatches
+            .cp-swatch(
+              v-for="c in COLOR_SWATCHES"
+              :key="c"
+              :style="{background: c}"
+              :class="{selected: colorPickerRow && colorPickerRow.color === c}"
+              @click="applyColor(c)"
+            )
+          .cp-custom
+            label Custom:
+            input(type="color" :value="colorPickerRow ? colorPickerRow.color : '#ffffff'" @input="applyColor($event.target.value)")
 
     //- ─── CENTER: ALL ACTIVITIES ─────────────────────────────────────
-    .chronio-center
+    .chronio-center(@click.self="clearSelection")
       .center-header
         .center-title
-          | All Activities:&nbsp;
+          | {{ selectedCatFilter && selectedCatFilter !== '__unassigned__' ? selectedCatFilter.split('>').pop() : 'All Activities' }}:&nbsp;
           strong {{ totalTrackedTime }}
         .view-toggle
           button(:class="{active: viewMode === 'unified'}" @click="viewMode = 'unified'") Unified
-          button(:class="{active: viewMode === 'chrono'}" @click="viewMode = 'chrono'") Chronological
+          button(:class="{active: viewMode === 'apps'}" @click="viewMode = 'apps'") Apps
+          button(:class="{active: viewMode === 'chrono'}" @click="viewMode = 'chrono'") Chrono
 
-      .activities-scroll
+      //- Empty state (#45)
+      .act-day-empty(v-if="!loading && !activeWindowEvents.length")
+        .act-empty-icon ○
+        p(v-if="isFuture") No data yet for this day
+        p(v-else) No activity recorded for {{ dateDisplay }}
+        button.act-empty-prev(@click="goToPrevActiveDay") ← Previous day with data
+
+      .activities-scroll(v-else ref="activitiesScroll" @click.self="clearSelection")
         //- UNIFIED VIEW
         template(v-if="viewMode === 'unified'")
           .act-empty(v-if="!filteredActivitiesTree.length") No activity data for this period
@@ -165,116 +216,134 @@ div.chronio-view(@click="dismissContextMenu" @keydown.esc="dismissContextMenu")
 
             template(v-if="expandedCats[catNode.catKey]" v-for="appNode in catNode.apps" :key="catNode.catKey + '/' + appNode.app")
               .act-row.act-row--app(
-                :draggable="true"
-                @dragstart="onDragStart($event, 'app', appNode.app)"
-                @click="toggleExpandApp(catNode.catKey + '/' + appNode.app)"
-                title="Drag to a category to assign"
+                draggable="true"
+                :class="{'row-selected': selectedRowKeys[appRowKey(catNode.catKey, appNode.app)]}"
+                @click="onUnifiedAppRowClick(catNode.catKey, appNode, $event)"
+                @dragstart="onDragStartApp(appNode, $event)"
+                @dragend="onDragEnd"
               )
                 .act-indent
-                .act-drag-handle ⠿
+                span.act-expand(v-if="appNode.titles && appNode.titles.length") {{ expandedApps[catNode.catKey + '/' + appNode.app] ? '▾' : '▸' }}
+                span.act-expand-spacer(v-else)
                 .act-app-icon(:style="{background: appNode.color}")
                 span.act-name {{ appNode.app }}
+                span.act-drag-hint ↖
                 span.act-dur {{ formatDuration(appNode.duration) }}
-                button.act-quick-cat-btn(
-                  @click.stop="quickCatMenu = quickCatMenu === appNode.app ? null : appNode.app"
-                  title="Assign to category"
-                ) →
-              .act-quick-cat-menu(v-if="quickCatMenu === appNode.app" @click.stop)
-                .act-quick-cat-item(
-                  v-for="cat in sidebarFlatTree"
-                  :key="cat.key"
-                  :style="{paddingLeft: (cat.depth * 10 + 8) + 'px'}"
-                  @click.stop="quickAssignToCategory(appNode.app, cat)"
-                )
-                  .act-quick-cat-dot(:style="{background: cat.color}")
-                  span {{ cat.label }}
 
               template(v-if="expandedApps[catNode.catKey + '/' + appNode.app]" v-for="t in appNode.titles" :key="catNode.catKey + '/' + appNode.app + '/' + t.title")
                 .act-row.act-row--title(
-                  :draggable="true"
-                  @dragstart="onDragStart($event, 'title', t.rawTitle || t.title)"
+                  draggable="true"
+                  :class="{'row-selected': selectedRowKeys[titleRowKey(catNode.catKey, appNode.app, t.title)]}"
+                  @click="onActivityRowClick(titleRowKey(catNode.catKey, appNode.app, t.title), {type:'title', app: appNode.app, title: t.title, rawTitle: t.title}, $event)"
+                  @dragstart="onDragStartTitle(appNode.app, t, $event)"
+                  @dragend="onDragEnd"
                 )
                   .act-indent2
-                  span.act-title(:title="t.title") {{ formatTabTitle(t.title) }}
+                  span.act-title(:title="t.title") {{ t.title }}
                   span.act-dur {{ formatDuration(t.duration) }}
 
-        //- CHRONOLOGICAL VIEW
+        //- APPS VIEW (#40) — flat app list sorted by time
+        template(v-else-if="viewMode === 'apps'")
+          .act-empty(v-if="!flatAppsList.length") No activity data for this period
+          template(v-else v-for="appNode in flatAppsList" :key="'flat/' + appNode.app")
+            .act-row.act-row--app(
+              draggable="true"
+              :class="{'row-selected': selectedRowKeys['flat/' + appNode.app]}"
+              @click="onActivityRowClick('flat/' + appNode.app, {type:'app', app: appNode.app, title: ''}, $event)"
+              @dragstart="onDragStartApp(appNode, $event)"
+              @dragend="onDragEnd"
+            )
+              span.act-expand(@click.stop="toggleExpandApp('flat/' + appNode.app)") {{ expandedApps['flat/' + appNode.app] ? '▾' : '▸' }}
+              .act-app-icon(:style="{background: appNode.color}")
+              span.act-name {{ appNode.app }}
+              span.act-drag-hint ↖
+              span.act-dur {{ formatDuration(appNode.duration) }}
+            template(v-if="expandedApps['flat/' + appNode.app]" v-for="t in appNode.titles" :key="'flat/' + appNode.app + '/' + t.title")
+              .act-row.act-row--title(
+                draggable="true"
+                :class="{'row-selected': selectedRowKeys['flat/' + appNode.app + '/' + t.title]}"
+                @click="onActivityRowClick('flat/' + appNode.app + '/' + t.title, {type:'title', app: appNode.app, title: t.title, rawTitle: t.title}, $event)"
+                @dragstart="onDragStartTitle(appNode.app, t, $event)"
+                @dragend="onDragEnd"
+              )
+                .act-indent2
+                span.act-title(:title="t.title") {{ t.title }}
+                span.act-dur {{ formatDuration(t.duration) }}
+
+        //- CHRONOLOGICAL VIEW — grouped by merged timeline block, expandable
         template(v-else)
-          .act-empty(v-if="!chronoEvents.length") No activity data for this period
-          .act-row.act-row--chrono(
-            v-else
-            v-for="e in chronoEvents"
-            :key="e.ts"
-          )
-            .act-dot(:style="{background: e.catColor}")
-            .act-app-icon(:style="{background: e.appColor}")
-            .act-chrono-content
-              .act-chrono-top
-                span.act-app {{ e.app }}
-                span.act-time {{ e.timeStr }}
+          .act-empty(v-if="!chronoGrouped.length") No activity data for this period
+          template(v-else v-for="group in chronoGrouped" :key="group.key")
+            .act-row.act-row--chrono-group(
+              :data-startms="group.startMs"
+              @click="toggleChronoBlock(group.key)"
+            )
+              span.act-caret {{ expandedTimelineBlocks[group.key] ? '▾' : '▸' }}
+              .act-app-icon(:style="{background: group.color}")
+              span.act-app {{ group.label }}
+              span.act-time-range {{ group.range }}
+              span.act-dur {{ formatDuration((group.endMs - group.startMs) / 1000) }}
+
+            template(v-if="expandedTimelineBlocks[group.key]" v-for="e in group.subEvents" :key="e.timestamp + e.data.title")
+              .act-row.act-row--chrono-sub
+                .act-indent
+                span.act-app-label {{ e.data.app }}:
+                span.act-title(:title="e.data.title") {{ cleanTitle(e.data.title || '', e.data.app || '') }}
+                span.act-time {{ formatHHMM(e.timestamp) }}
                 span.act-dur {{ formatDuration(e.duration) }}
-              .act-chrono-title(v-if="e.title" :title="e.title") {{ e.title }}
 
     //- ─── RIGHT: TIMELINE ────────────────────────────────────────────
     .chronio-timeline-panel
-      .tl-filter-badge(v-if="selectedCatFilter && selectedCatFilter !== '__unassigned__'")
-        span Filtered: {{ sidebarFlatTree.find(r => r.key === selectedCatFilter) ? sidebarFlatTree.find(r => r.key === selectedCatFilter).label : selectedCatFilter }}
-        button.tl-filter-clear(@click="selectedCatFilter = null") &times;
-      .tl-filter-badge(v-else-if="selectedCatFilter === '__unassigned__'")
-        span Filtered: Uncategorized
-        button.tl-filter-clear(@click="selectedCatFilter = null") &times;
-      .timeline-scroll
-        .chronio-empty(v-if="!timeline.length") No timeline data for this period
-        template(v-else v-for="item in timelineWithMarkers")
-          .tl-time(v-if="item.type === 'time'" :key="'t-' + item.label") {{ item.label }}
-          .tl-block(
-            v-else
-            :key="'b-' + item.label + item.range"
-            :style="{background: item.color, minHeight: item.height + 'px', opacity: selectedCatFilter && !isCatKeyMatch(item.catKey, selectedCatFilter) ? 0.2 : 1}"
-            @click="selectedEvent = item.event"
-            @mouseenter="showTooltip(item, $event)"
-            @mouseleave="hideTooltip"
+      .timeline-scroll(ref="timelineScroll")
+        .chronio-empty(v-if="!timeline.length && !activeWindowEvents.length") —
+        .chronio-empty(v-else-if="!timeline.length") No events long enough to display
+        .timeline-canvas(v-else :style="{height: timelineCanvas.totalHeight + 'px'}")
+          //- Hour gridlines + labels
+          .tl-hour(
+            v-for="h in timelineCanvas.hours"
+            :key="h.h"
+            :style="{top: h.top + 'px'}"
           )
-            .tl-block-header
-              .tl-title {{ item.label }}
-              .tl-time-range {{ item.range }}
-        .tl-now-line(v-if="nowLinePosition.show" :style="{top: nowLinePosition.top}")
-          span.tl-now-label {{ nowLinePosition.label }}
-      .tl-tooltip(
-        v-if="tooltip"
-        :style="{left: tooltip.x + 12 + 'px', top: tooltip.y - 10 + 'px'}"
-      )
-        .tl-tooltip-app {{ tooltip.app }}
-        .tl-tooltip-title {{ tooltip.title }}
-        .tl-tooltip-cat {{ tooltip.category }}
-        .tl-tooltip-meta {{ tooltip.range }} &middot; {{ tooltip.duration }}
+            span.tl-hour-label {{ h.label }}
+            .tl-hour-line
+          //- Current time indicator
+          .tl-now-line(
+            v-if="timelineCanvas.nowPx !== null"
+            :style="{top: timelineCanvas.nowPx + 'px'}"
+          )
+          //- Activity blocks
+          .tl-block(
+            v-for="block in timelineCanvas.blocks"
+            :key="'b-' + block.label + block.range"
+            :style="{background: block.color, top: block.top + 'px', height: block.heightPx + 'px'}"
+            :title="blockTooltip(block)"
+            @click="onTimelineBlockClick(block)"
+          )
+            .tl-block-inner(v-if="block.heightPx > 20")
+              .tl-title {{ block.label }}
+              .tl-time-range(v-if="block.heightPx > 38") {{ block.range }}
 
-    //- ─── TOAST NOTIFICATION ─────────────────────────────────────────
-    transition(name="toast")
-      .chronio-toast(v-if="toast")
-        span.toast-message {{ toast.message }}
-        button.toast-undo(@click="_undoCategorization") Undo
-
-    //- ─── ONBOARDING OVERLAY ─────────────────────────────────────────
-    .onboarding-overlay(v-if="showOnboarding" @click.self="dismissOnboarding")
-      .onboarding-card
-        .onboarding-step(v-if="onboardingStep === 0")
-          .onboarding-icon &#9201;
-          h2 Welcome to Chronio
-          p Your personal activity tracker. See exactly what you did and when — with automatic categorization and productivity scoring.
-        .onboarding-step(v-if="onboardingStep === 1")
-          .onboarding-icon &#8644;
-          h2 Drag to Categorize
-          p Drag apps or browser tabs from the center panel onto sidebar categories. Rules are saved automatically and persist across days.
-        .onboarding-step(v-if="onboardingStep === 2")
-          .onboarding-icon &#9889;
-          h2 Track Your Productivity
-          p Right-click categories to mark them as Productive, Neutral, or Distracting. Your productivity score updates in real time.
-        .onboarding-actions
-          button.onboarding-skip(@click="dismissOnboarding") Skip
-          .onboarding-dots
-            span.dot(v-for="i in 3" :key="i" :class="{active: onboardingStep === i - 1}")
-          button.onboarding-next(@click="nextOnboardingStep") {{ onboardingStep >= 2 ? 'Get Started' : 'Next' }}
+  //- ── ONBOARDING MODAL (#12) ──────────────────────────────────────────
+  .onboarding-overlay(v-if="showOnboarding" @click.self="dismissOnboarding")
+    .onboarding-modal
+      .onboarding-step(v-if="onboardingStep === 0")
+        .ob-emoji 🕐
+        h2 Welcome to Chronio
+        p Your personal activity tracker. See exactly what you worked on, when, and for how long.
+      .onboarding-step(v-else-if="onboardingStep === 1")
+        .ob-emoji 🗂️
+        h2 Organize your work
+        p Drag any app or tab from the center panel into a project folder on the left to categorize it. Chronio remembers the rule for every future day.
+      .onboarding-step(v-else-if="onboardingStep === 2")
+        .ob-emoji 📊
+        h2 Your productivity score
+        p Right-click any project folder to mark it Productive or Distracting. Your daily score updates automatically.
+      .ob-dots
+        span.ob-dot(v-for="i in 3" :key="i" :class="{active: onboardingStep === i - 1}" @click="onboardingStep = i - 1")
+      .ob-actions
+        button.ob-btn-ghost(v-if="onboardingStep > 0" @click="onboardingStep--") Back
+        button.ob-btn-primary(v-if="onboardingStep < 2" @click="onboardingStep++") Next
+        button.ob-btn-primary(v-else @click="dismissOnboarding") Get started
 </template>
 
 <script lang="ts">
@@ -289,6 +358,20 @@ import { dateToTimeperiod } from '~/util/timeperiod';
 import { getColorFromString } from '~/util/color';
 import { getClient } from '~/util/awclient';
 
+// System processes that are never real user activity
+const SYSTEM_PROCESS_BLOCKLIST = new Set(['loginwindow', 'ScreenSaverEngine']);
+
+// Color swatches for the color picker (#7)
+const COLOR_SWATCHES = [
+  '#4b8bff', '#8a3bff', '#ff6a1f', '#ff4f9a', '#1db954',
+  '#0ea5e9', '#f59e0b', '#e6683c', '#a855f7', '#ec4899',
+  '#14b8a6', '#ef4444', '#84cc16', '#f97316', '#64748b',
+];
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 const GRADIENTS: string[] = [
   'linear-gradient(135deg, #3c7bff, #5aa1ff)',
   'linear-gradient(135deg, #8a3bff, #c04cff)',
@@ -300,8 +383,8 @@ const GRADIENTS: string[] = [
   'linear-gradient(135deg, #f59e0b, #fbbf24)',
 ];
 
-// System processes to always filter out (exact app name match)
-const SYSTEM_PROCESSES = ['loginwindow', 'ScreenSaverEngine'];
+const HOUR_PX = 56; // pixels per hour on the timeline canvas
+const MAX_MERGE_GAP_MS = 15 * 60 * 1000; // don't merge same-app blocks separated by >15 min
 
 // Browser names to strip from window titles
 const BROWSER_SUFFIXES = [
@@ -320,30 +403,6 @@ function formatDuration(seconds: number): string {
 
 function formatHHMM(ts: any): string {
   return moment(ts).format('HH:mm');
-}
-
-/**
- * Reformats a browser window title into "Service: Page Title" form.
- * Most browser window titles follow the pattern "Page Title - Service" or "Page Title | Service".
- * We flip it so the service acts as a namespace prefix.
- * e.g. "Some tweet - X"          → "X: Some tweet"
- *      "Thread name - ChatGPT"   → "ChatGPT: Thread name"
- *      "Home / X"                → "X: Home"
- *      "Stack Overflow - ..."    → "Stack Overflow: ..."
- * If no separator is found the title is returned unchanged.
- */
-function formatTabTitle(rawTitle: string): string {
-  if (!rawTitle) return rawTitle;
-  // Match "Page Title  -  Service" or "Page Title / Service" or "Page Title | Service"
-  // We take the LAST separator as the split point to handle titles that themselves contain dashes
-  const match = rawTitle.match(/^([\s\S]+?)\s+[-/|–—]\s+([^-/|–—]+)$/);
-  if (!match) return rawTitle;
-  const [, pageTitle, service] = match;
-  const pageTrimmed = pageTitle.trim();
-  const serviceTrimmed = service.trim();
-  // Avoid "Service: Service" when title IS the service name
-  if (pageTrimmed.toLowerCase() === serviceTrimmed.toLowerCase()) return serviceTrimmed;
-  return `${serviceTrimmed}: ${pageTrimmed}`;
 }
 
 function gradientForApp(app: string, index: number): string {
@@ -365,36 +424,46 @@ export default {
       // expand/filter state
       expandedCats: {} as Record<string, boolean>,
       expandedApps: {} as Record<string, boolean>,
+      expandedTimelineBlocks: {} as Record<string, boolean>,
       sidebarExpanded: {} as Record<string, boolean>,
       selectedCatFilter: null as string | null,
-      viewMode: 'unified' as 'unified' | 'chrono',
-      // Tooltip state
-      tooltip: null as { app: string; title: string; category: string; range: string; duration: string; x: number; y: number } | null,
-      // Live refresh state
-      refreshTimer: null as any,
-      nowMinute: 0 as number,
-      // Context menu state
-      contextMenu: null as { x: number; y: number; row: any } | null,
-      // Inline input state (create, createSub, rename)
-      inlineInput: null as { mode: string; parentKey: string | null; value: string; catName?: string[] } | null,
-      // Drag-and-drop state
-      dropTarget: null as string | null,
-      dropSuccess: null as string | null,
-      // Toast notification state (rich object with undo + always-save)
-      toast: null as {
-        message: string;
-        catId: number;
-        prevRegex: string | null;
-        prevType: string | null;
-        timer: ReturnType<typeof setTimeout> | null;
-      } | null,
-      // Quick-categorize menu state
-      quickCatMenu: null as string | null,
-      // Color picker state
-      colorPicker: null as { x: number; y: number; row: any; currentColor: string } | null,
-      // Onboarding state
+      viewMode: 'unified' as 'unified' | 'apps' | 'chrono',
+      // inline rename state (#6 / #30)
+      renamingKey: null as string | null,
+      renameValue: '' as string,
+      // inline create state (#38)
+      inlineCreateParent: null as string | null,
+      inlineCreateValue: '' as string,
+      // context menu state
+      ctxMenu: null as { row: any; x: number; y: number } | null,
+      // color picker state (#7)
+      colorPickerRow: null as any,
+      colorPickerPos: { x: 0, y: 0 },
+      COLOR_SWATCHES: COLOR_SWATCHES,
+      // drag-drop state (#3)
+      dragOverCatKey: null as string | null,
+      // multi-select state (#37)
+      selectedRowKeys: {} as Record<string, boolean>,
+      selectedRowPayloads: {} as Record<string, any>,
+      lastClickedKey: null as string | null,
+      // drag-category state (#32)
+      draggingSidebarKey: null as string | null,
+      // sidebar reorder state (#46)
+      reorderDragKey: null as string | null,
+      reorderDropKey: null as string | null,
+      // onboarding state (#12)
       showOnboarding: false as boolean,
       onboardingStep: 0 as number,
+      // live refresh (#9)
+      refreshTimer: null as any,
+      // #35: guard to skip silent refresh if a full refresh is already in flight
+      isRefreshing: false as boolean,
+      // Mini calendar (#52)
+      calendarYear: 0 as number,
+      calendarMonth: 0 as number,   // 0-based (moment month)
+      calendarDots: {} as Record<string, boolean>,
+      // keyboard handler ref (#44)
+      keyHandler: null as any,
     };
   },
 
@@ -406,6 +475,10 @@ export default {
 
     isToday(): boolean {
       return moment(this.selectedDate).isSame(moment(), 'day');
+    },
+
+    isFuture(): boolean {
+      return moment(this.selectedDate).isAfter(moment(), 'day');
     },
 
     host(): string {
@@ -438,41 +511,55 @@ export default {
     activeWindowEvents(): any[] {
       const events = this.windowEvents || [];
       const intervals = this.notAfkIntervals;
-      const result: any[] = [];
-      for (const e of events) {
-        // Filter out system processes by exact app name match
-        const app = e.data?.app || '';
-        if (SYSTEM_PROCESSES.includes(app)) continue;
-
+      // Fail-open: if no AFK data available, show all window events unfiltered
+      if (intervals.length === 0) {
+        return events.filter((e: any) => !SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app));
+      }
+      return events.filter((e: any) => {
+        if (SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app)) return false;
         const eStart = moment(e.timestamp).valueOf();
         const eEnd = eStart + e.duration * 1000;
+        const totalNotAfk = intervals.reduce((sum: number, iv: any) => {
+          return sum + Math.max(0, Math.min(eEnd, iv.end) - Math.max(eStart, iv.start));
+        }, 0);
+        const eventDur = eEnd - eStart;
+        return totalNotAfk > 0 && totalNotAfk / eventDur > 0.1;
+      });
+    },
 
-        // Find all not-afk intervals that overlap this event
-        const overlaps = intervals
-          .map((iv: any) => ({
-            start: Math.max(eStart, iv.start),
-            end: Math.min(eEnd, iv.end),
-          }))
-          .filter((ov: any) => ov.end > ov.start);
+    afkStatus(): 'active' | 'no-data' {
+      if (this.loading) return 'no-data';
+      return this.notAfkIntervals.length > 0 ? 'active' : 'no-data';
+    },
 
-        if (!overlaps.length) continue;
+    calendarMonthLabel(): string {
+      return moment().year(this.calendarYear).month(this.calendarMonth).format('MMM YYYY');
+    },
 
-        const totalNotAfkMs = overlaps.reduce((sum: number, ov: any) => sum + (ov.end - ov.start), 0);
-        const eventDurMs = eEnd - eStart;
-        if (totalNotAfkMs / eventDurMs <= 0.1) continue;
-
-        // Clip: anchor event to its first real active moment and use only the
-        // not-afk overlap duration. This eliminates phantom blocks caused by
-        // stale watcher events with huge raw durations (e.g. overnight Chrome).
-        const clippedStart = overlaps[0].start;
-        const clippedDuration = totalNotAfkMs / 1000;
-        result.push(
-          clippedDuration < e.duration
-            ? { ...e, timestamp: new Date(clippedStart).toISOString(), duration: clippedDuration }
-            : e
-        );
+    calendarDays(): any[] {
+      if (!this.calendarYear) return [];
+      const firstDay = moment().year(this.calendarYear).month(this.calendarMonth).date(1);
+      const daysInMonth = firstDay.daysInMonth();
+      const startDow = firstDay.day(); // 0=Sun
+      const today = moment().format('YYYY-MM-DD');
+      const cells: any[] = [];
+      // Pad before start
+      for (let i = 0; i < startDow; i++) {
+        cells.push({ key: 'pad-' + i, inMonth: false, date: '', day: 0, hasData: false, isToday: false, isSelected: false });
       }
-      return result;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = moment().year(this.calendarYear).month(this.calendarMonth).date(d).format('YYYY-MM-DD');
+        cells.push({
+          key: date,
+          inMonth: true,
+          date,
+          day: d,
+          hasData: !!this.calendarDots[date],
+          isToday: date === today,
+          isSelected: date === this.selectedDate,
+        });
+      }
+      return cells;
     },
 
     totalTrackedTime(): string {
@@ -488,10 +575,18 @@ export default {
       const events: any[] = this.activeWindowEvents;
       const categories: any[] = (this.categoryStore as any).classes;
 
-      // Pre-compile regexes once
+      // Pre-compile regexes once; strip Python-style inline flags like (?m) which are invalid in JS
       const regexes: [any, RegExp][] = categories
         .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
-        .map((c: any) => [c, new RegExp(c.rule.regex, (c.rule.ignore_case ? 'i' : '') + 'm')]);
+        .flatMap((c: any) => {
+          try {
+            const pattern = c.rule.regex.replace(/\(\?[imsx]+\)/g, '');
+            return [[c, new RegExp(pattern, (c.rule.ignore_case ? 'i' : '') + 'm')]];
+          } catch (e) {
+            console.warn('Invalid category regex:', c.rule.regex, e);
+            return [];
+          }
+        });
 
       const catMap: Record<string, any> = {};
 
@@ -530,10 +625,8 @@ export default {
           };
         }
         catMap[catKey].apps[app].duration += dur;
-        if (!catMap[catKey].apps[app].titles[title]) {
-          catMap[catKey].apps[app].titles[title] = { duration: 0, rawTitle };
-        }
-        catMap[catKey].apps[app].titles[title].duration += dur;
+        catMap[catKey].apps[app].titles[title] =
+          (catMap[catKey].apps[app].titles[title] || 0) + dur;
       }
 
       return Object.values(catMap)
@@ -544,9 +637,9 @@ export default {
             .sort((a: any, b: any) => b.duration - a.duration)
             .map((app: any) => ({
               ...app,
-              titles: Object.entries(app.titles as Record<string, { duration: number; rawTitle: string }>)
-                .sort(([, a], [, b]) => (b as any).duration - (a as any).duration)
-                .map(([title, info]) => ({ title, duration: (info as any).duration, rawTitle: (info as any).rawTitle })),
+              titles: Object.entries(app.titles as Record<string, number>)
+                .sort(([, a], [, b]) => (b as number) - (a as number))
+                .map(([title, dur]) => ({ title, duration: dur })),
             })),
         }));
     },
@@ -616,13 +709,17 @@ export default {
         for (const cat of cats) {
           const key: string = cat.name.join('>');
           const dur = durations[key] || 0;
+          const score = catStore.get_category_score(cat.name);
           rows.push({
             key,
+            id: cat.id,
             label: cat.name[cat.name.length - 1],
+            fullName: cat.name,
             depth,
             color: catStore.get_category_color(cat.name),
             hasChildren: cat.children && cat.children.length > 0,
             time: dur > 0 ? formatDuration(dur) : '',
+            score,
           });
           if (expanded[key] && cat.children && cat.children.length > 0) {
             flatten(cat.children, depth + 1);
@@ -631,7 +728,102 @@ export default {
       };
 
       flatten(catStore.classes_hierarchy, 0);
+
+      // Inject inline-create row at the right position (#38)
+      if (this.inlineCreateParent !== null) {
+        const parentKey = this.inlineCreateParent;
+        let insertIdx = rows.length;
+        let depth = 0;
+        if (parentKey !== '') {
+          const parentIdx = rows.findIndex((r: any) => r.key === parentKey);
+          if (parentIdx >= 0) {
+            depth = rows[parentIdx].depth + 1;
+            insertIdx = parentIdx + 1;
+            while (insertIdx < rows.length && rows[insertIdx].depth >= depth) insertIdx++;
+          }
+        }
+        rows.splice(insertIdx, 0, {
+          key: '__inline_create__',
+          id: -1,
+          label: '',
+          depth,
+          isInlineCreate: true,
+          color: '#4b8bff',
+          hasChildren: false,
+          time: '',
+          score: 0,
+          fullName: [],
+        });
+      }
+
       return rows;
+    },
+
+    // #40: Flat app list sorted by total time
+    flatAppsList(): any[] {
+      const appMap: Record<string, any> = {};
+      for (const cat of this.filteredActivitiesTree as any[]) {
+        for (const appNode of cat.apps) {
+          if (!appMap[appNode.app]) {
+            appMap[appNode.app] = { app: appNode.app, color: appNode.color, duration: 0, titles: [] as any[] };
+          }
+          appMap[appNode.app].duration += appNode.duration;
+          for (const t of appNode.titles) {
+            const existing = appMap[appNode.app].titles.find((x: any) => x.title === t.title);
+            if (existing) existing.duration += t.duration;
+            else appMap[appNode.app].titles.push({ ...t });
+          }
+        }
+      }
+      return Object.values(appMap)
+        .sort((a: any, b: any) => b.duration - a.duration)
+        .map((a: any) => ({ ...a, titles: [...a.titles].sort((x: any, y: any) => y.duration - x.duration) }));
+    },
+
+    // #37: ordered list of visible row keys for shift-range select
+    visibleActivityRowKeys(): { key: string; payload: any }[] {
+      const result: { key: string; payload: any }[] = [];
+      if (this.viewMode === 'unified') {
+        for (const catNode of this.filteredActivitiesTree as any[]) {
+          if (!this.expandedCats[catNode.catKey]) continue;
+          for (const appNode of catNode.apps) {
+            const aKey = this.appRowKey(catNode.catKey, appNode.app);
+            result.push({ key: aKey, payload: { type: 'app', app: appNode.app, title: '' } });
+            if (this.expandedApps[catNode.catKey + '/' + appNode.app]) {
+              for (const t of appNode.titles) {
+                result.push({
+                  key: this.titleRowKey(catNode.catKey, appNode.app, t.title),
+                  payload: { type: 'title', app: appNode.app, title: t.title, rawTitle: t.title },
+                });
+              }
+            }
+          }
+        }
+      } else if (this.viewMode === 'apps') {
+        for (const appNode of this.flatAppsList as any[]) {
+          result.push({ key: 'flat/' + appNode.app, payload: { type: 'app', app: appNode.app, title: '' } });
+          if (this.expandedApps['flat/' + appNode.app]) {
+            for (const t of appNode.titles) {
+              result.push({
+                key: 'flat/' + appNode.app + '/' + t.title,
+                payload: { type: 'title', app: appNode.app, title: t.title, rawTitle: t.title },
+              });
+            }
+          }
+        }
+      }
+      return result;
+    },
+
+    // Map each app to its category color (for timeline coloring)
+    appCategoryColors(): Record<string, string> {
+      const map: Record<string, string> = {};
+      for (const cat of this.activitiesTree as any[]) {
+        for (const app of cat.apps) {
+          if (!map[app.app]) map[app.app] = cat.color;
+        }
+      }
+      return map;
     },
 
     // Timeline: merge consecutive same-app events, full day
@@ -653,27 +845,15 @@ export default {
         (a: any, b: any) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf()
       );
 
-      // Pass 1: merge consecutive same-app events
+      // Pass 1: merge consecutive same-app events, but only if gap < MAX_MERGE_GAP_MS
       const merged1: any[] = [];
       let current: any = null;
       for (const e of sorted) {
         const app: string = e.data?.app || 'Unknown';
-        if (current && current.app === app) {
-          const eStart = moment(e.timestamp);
-          const gapSeconds = eStart.diff(current.end, 'seconds');
-          if (gapSeconds > 15 * 60) {
-            // Gap too large — start a new block instead of extending across the gap
-            merged1.push(current);
-            current = {
-              app,
-              start: eStart,
-              end: eStart.clone().add(e.duration, 'seconds'),
-              duration: e.duration,
-              event: e,
-            };
-            continue;
-          }
-          const eEnd = eStart.clone().add(e.duration, 'seconds');
+        const eStart = moment(e.timestamp).valueOf();
+        const gapMs = current ? eStart - current.end.valueOf() : Infinity;
+        if (current && current.app === app && gapMs < MAX_MERGE_GAP_MS) {
+          const eEnd = moment(e.timestamp).add(e.duration, 'seconds');
           if (eEnd.isAfter(current.end)) current.end = eEnd;
           current.duration += e.duration;
           continue;
@@ -710,57 +890,97 @@ export default {
         }
       }
 
-      // Pre-compile category regexes for color lookup
-      const catStore = this.categoryStore as any;
-      const categories: any[] = catStore.classes;
-      const regexes: [any, RegExp][] = categories
-        .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
-        .map((c: any) => [c, new RegExp(c.rule.regex, (c.rule.ignore_case ? 'i' : '') + 'm')]);
-
+      const appIndexMap: Record<string, number> = {};
+      const catColors = this.appCategoryColors;
+      let idx = 0;
       return blocks
         .filter((b: any) => b.duration >= 60)
         .map((b: any) => {
-          // Classify block to get category color
-          const app = b.app || 'Unknown';
-          const title = b.event?.data?.title || '';
-          const str = app + '\n' + title;
-          const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
-          let color: string;
-          let catKey: string | null = null;
-          if (matches.length > 0) {
-            const catName: string[] = (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name;
-            const catColor: string = catStore.get_category_color(catName) || '#6b7a8d';
-            color = `linear-gradient(135deg, ${catColor}, ${catColor}dd)`;
-            catKey = catName.join('>');
-          } else {
-            color = 'linear-gradient(135deg, #6b7a8d, #6b7a8ddd)';
-            catKey = '__unassigned__';
-          }
+          if (!(b.app in appIndexMap)) appIndexMap[b.app] = idx++;
+          // Use category color if available, else fall back to gradient
+          const catColor = catColors[b.app];
+          const color = catColor
+            ? catColor
+            : gradientForApp(b.app, appIndexMap[b.app]);
           return {
             label: b.app,
             range: formatHHMM(b.start.toISOString()) + ' – ' + formatHHMM(b.end.toISOString()),
             color,
-            height: Math.max(36, Math.min(180, b.duration / 15)),
             event: b.event,
-            catKey,
+            startMs: b.start.valueOf(),
+            endMs: b.end.valueOf(),
           };
         });
     },
 
-    timelineWithMarkers(): any[] {
-      if (!this.timeline.length) return [];
-      const result: any[] = [];
-      let lastHour = -1;
-      for (const block of this.timeline as any[]) {
-        const hourStr = block.range.split(' – ')[0];
-        const hour = parseInt(hourStr.split(':')[0]);
-        if (hour !== lastHour) {
-          result.push({ type: 'time', label: hourStr });
-          lastHour = hour;
+    timelineCanvas(): { blocks: any[]; hours: any[]; nowPx: number | null; totalHeight: number; canvasStartMs: number } {
+      const dayStart = moment(this.selectedDate).startOf('day').valueOf();
+      const SCALE = HOUR_PX / 3600000; // px per millisecond
+      const blocks_raw = this.timeline as any[];
+
+      // Default visible window: 8am–10pm
+      const default8am = moment(this.selectedDate).hour(8).startOf('hour').valueOf();
+      const default10pm = moment(this.selectedDate).hour(22).startOf('hour').valueOf();
+
+      // Extend if there's content outside the default window
+      const earliestContent = blocks_raw.length > 0
+        ? Math.min(...blocks_raw.map((b: any) => b.startMs))
+        : default8am;
+      const latestContent = blocks_raw.length > 0
+        ? Math.max(...blocks_raw.map((b: any) => b.endMs))
+        : default10pm;
+
+      // Canvas bounds: snap to hour boundaries
+      const canvasStartMs = moment(Math.min(earliestContent, default8am)).startOf('hour').valueOf();
+      const canvasEndMs = moment(Math.max(latestContent, default10pm)).add(1, 'hour').startOf('hour').valueOf();
+
+      const startHour = Math.round((canvasStartMs - dayStart) / 3600000);
+      const endHour = Math.round((canvasEndMs - dayStart) / 3600000);
+
+      // Hour labels + gridlines for visible range only
+      const hours = Array.from({ length: endHour - startHour + 1 }, (_, i) => {
+        const h = startHour + i;
+        const label = h === 0 || h === 24 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h - 12}pm`;
+        return { h, label, top: i * HOUR_PX };
+      });
+
+      // Position blocks relative to canvasStartMs
+      const blocks = blocks_raw.map((item: any) => {
+        const topPx = (item.startMs - canvasStartMs) * SCALE;
+        const heightPx = Math.max(4, (item.endMs - item.startMs) * SCALE);
+        return { ...item, top: topPx, heightPx };
+      });
+
+      // Current time red line (today only, if within visible range)
+      let nowPx: number | null = null;
+      if (this.isToday) {
+        const nowMs = moment().valueOf();
+        if (nowMs >= canvasStartMs && nowMs <= canvasEndMs) {
+          nowPx = (nowMs - canvasStartMs) * SCALE;
         }
-        result.push({ ...block, type: 'block' });
       }
-      return result;
+
+      return { blocks, hours, nowPx, totalHeight: (endHour - startHour) * HOUR_PX, canvasStartMs };
+    },
+
+    // Chronological view: timeline blocks as top-level rows, individual events nested inside
+    chronoGrouped(): any[] {
+      const blocks: any[] = this.timeline as any[];
+      const allEvents: any[] = this.activeWindowEvents;
+      const q = this.searchQuery.toLowerCase();
+
+      return blocks
+        .filter((block: any) => !q || block.label.toLowerCase().includes(q))
+        .map((block: any) => {
+          const key = block.label + '-' + block.startMs;
+          const subEvents = allEvents
+            .filter((e: any) => {
+              const t = moment(e.timestamp).valueOf();
+              return t >= block.startMs && t < block.endMs && (e.duration || 0) >= 5;
+            })
+            .sort((a: any, b: any) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf());
+          return { ...block, key, subEvents };
+        });
     },
 
     // Flat chronological event list for the chrono view
@@ -804,71 +1024,16 @@ export default {
           };
         });
     },
-
-    // ─── PRODUCTIVITY SCORE ─────────────────────────────────────────
-    productivityDisplay(): { show: boolean; text: string; colorClass: string } {
-      const events: any[] = this.activeWindowEvents;
-      if (!events.length) return { show: false, text: '—', colorClass: '' };
-
-      const catStore = this.categoryStore as any;
-      const categories: any[] = catStore.classes;
-      const regexes: [any, RegExp][] = categories
-        .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
-        .map((c: any) => [c, new RegExp(c.rule.regex, (c.rule.ignore_case ? 'i' : '') + 'm')]);
-
-      let totalDur = 0;
-      let scoredDur = 0;
-
-      for (const e of events) {
-        const dur: number = e.duration || 0;
-        if (dur <= 0) continue;
-        totalDur += dur;
-
-        const app: string = e.data?.app || '';
-        const title: string = e.data?.title || '';
-        const str = app + '\n' + title;
-        const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
-        if (matches.length > 0) {
-          const catName: string[] = (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name;
-          const score: number = catStore.get_category_score(catName) || 0;
-          scoredDur += dur * score;
-        }
-      }
-
-      if (totalDur <= 0) return { show: false, text: '—', colorClass: '' };
-
-      const pct = Math.round((scoredDur / (totalDur * 10)) * 100);
-      const clamped = Math.max(0, Math.min(100, pct));
-      const colorClass = clamped >= 70 ? 'prod-green' : clamped >= 40 ? 'prod-yellow' : 'prod-red';
-      return { show: true, text: clamped + '%', colorClass };
-    },
-
-    // Now-line position for today's timeline
-    nowLinePosition(): { show: boolean; top: string; label: string } {
-      if (!this.isToday || !this.timeline.length) return { show: false, top: '0', label: '' };
-      // Access nowMinute to force reactivity updates
-      const _tick = this.nowMinute;
-      const now = moment();
-      const dayStart = 8;
-      const dayEnd = 22;
-      const currentHour = now.hours() + now.minutes() / 60;
-      if (currentHour < dayStart || currentHour > dayEnd) return { show: false, top: '0', label: '' };
-      const pct = ((currentHour - dayStart) / (dayEnd - dayStart)) * 100;
-      return { show: true, top: pct + '%', label: now.format('HH:mm') };
-    },
   },
 
   methods: {
-    // Check if a block's catKey matches the active filter (supports parent-level filtering)
-    isCatKeyMatch(blockCatKey: string | null, filter: string): boolean {
-      if (!blockCatKey || !filter) return false;
-      if (filter === '__unassigned__') return blockCatKey === '__unassigned__';
-      return blockCatKey === filter || blockCatKey.startsWith(filter + '>');
-    },
-
     // Expose module-level helpers to the template
     formatDuration(seconds: number): string {
       return formatDuration(seconds);
+    },
+
+    blockTooltip(block: any): string {
+      return block.label + '\n' + block.range + ' - ' + formatDuration((block.endMs - block.startMs) / 1000);
     },
     formatHHMM(ts: any): string {
       return formatHHMM(ts);
@@ -886,410 +1051,568 @@ export default {
       return title;
     },
 
+    toggleChronoBlock(key: string) {
+      this.$set(this.expandedTimelineBlocks, key, !this.expandedTimelineBlocks[key]);
+    },
+
+    onTimelineBlockClick(block: any) {
+      // Switch to chrono view and scroll to this block's time
+      this.viewMode = 'chrono';
+      this.$nextTick(() => {
+        const scroll = this.$refs.activitiesScroll as HTMLElement | undefined;
+        if (!scroll) return;
+        const row = scroll.querySelector(`[data-startms="${block.startMs}"]`) as HTMLElement | null;
+        if (row) {
+          scroll.scrollTop = Math.max(0, row.offsetTop - 60);
+        }
+      });
+    },
+
     toggleExpandCat(key: string) {
       this.$set(this.expandedCats, key, !this.expandedCats[key]);
-      this._saveExpandState();
+      this.saveExpandState();
     },
 
     toggleExpandApp(key: string) {
       this.$set(this.expandedApps, key, !this.expandedApps[key]);
-      this._saveExpandState();
     },
 
     toggleSidebarNode(key: string) {
       this.$set(this.sidebarExpanded, key, !this.sidebarExpanded[key]);
-      this._saveExpandState();
+      this.saveExpandState();
     },
 
-    _saveExpandState: _.debounce(function (this: any) {
-      try {
-        localStorage.setItem('chronio_expandedCats', JSON.stringify(this.expandedCats));
-        localStorage.setItem('chronio_expandedApps', JSON.stringify(this.expandedApps));
-        localStorage.setItem('chronio_sidebarExpanded', JSON.stringify(this.sidebarExpanded));
-      } catch (e) { /* localStorage full or unavailable */ }
-    }, 200),
-
-    // ─── TOOLTIP ──────────────────────────────────────────────────
-    showTooltip(item: any, event: MouseEvent) {
-      const e = item.event;
-      const app = e?.data?.app || item.label;
-      const title = e?.data?.title ? this.cleanTitle(e.data.title, app) : '';
-
-      // Find category
-      const categories: any[] = (this.categoryStore as any).classes;
-      const regexes = categories
-        .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
-        .map((c: any) => [c, new RegExp(c.rule.regex, (c.rule.ignore_case ? 'i' : '') + 'm')]);
-      const str = app + '\n' + (e?.data?.title || '');
-      const matches = regexes.filter(([, re]: any) => re.test(str));
-      const catName = matches.length > 0
-        ? (_.maxBy(matches, ([c]: any) => c.name.length) as any)[0].name
-        : ['Uncategorized'];
-
-      this.tooltip = {
-        app,
-        title: title || '(no title)',
-        category: catName[catName.length - 1],
-        range: item.range,
-        duration: formatDuration(e?.duration || 0),
-        x: event.clientX,
-        y: event.clientY,
-      };
-    },
-    hideTooltip() {
-      this.tooltip = null;
+    // #28: toggle expand state for a row
+    toggleSidebarExpand(row: any) {
+      this.$set(this.sidebarExpanded, row.key, !this.sidebarExpanded[row.key]);
+      this.saveExpandState();
     },
 
-    // ─── LIVE REFRESH ───────────────────────────────────────────────
-    _startLiveRefresh() {
-      this._stopLiveRefresh();
-      if (!this.isToday) return;
-      this.nowMinute = Date.now();
-      this.refreshTimer = setInterval(() => {
-        this.nowMinute = Date.now();
-        this.refresh();
-      }, 60000);
-    },
-    _stopLiveRefresh() {
-      if (this.refreshTimer) {
-        clearInterval(this.refreshTimer);
-        this.refreshTimer = null;
+    // #28 + #29: row click — toggle select (deselect if already selected); also expand if has children
+    onSidebarRowClick(row: any) {
+      this.ctxMenu = null;
+      // #29: toggle filter — deselect if already selected
+      if (this.selectedCatFilter === row.key) {
+        this.selectedCatFilter = null;
+      } else {
+        this.selectedCatFilter = row.key;
+        // #28: auto-expand when selecting a parent
+        if (row.hasChildren && !this.sidebarExpanded[row.key]) {
+          this.$set(this.sidebarExpanded, row.key, true);
+          this.saveExpandState();
+        }
       }
     },
 
-    // ─── PRESET COLORS (for color picker) ────────────────────────────
-    get presetColors(): string[] {
-      return [
-        '#4b8bff', '#8a3bff', '#1db954', '#ff6a1f', '#ff4f9a',
-        '#0ea5e9', '#f59e0b', '#e6683c', '#6b7a8d', '#ef4444',
-        '#22c55e', '#a855f7', '#06b6d4', '#ec4899', '#84cc16',
-        '#f97316',
-      ];
+    // #6 / #30: right-click context menu
+    onSidebarRowRightClick(row: any, evt: MouseEvent) {
+      this.ctxMenu = { row, x: evt.clientX, y: evt.clientY };
+      const close = () => { this.ctxMenu = null; window.removeEventListener('click', close); };
+      window.addEventListener('click', close);
     },
 
-    // ─── INLINE CATEGORY CRUD ─────────────────────────────────────
-    startInlineCreate(parentKey: string | null) {
-      this.dismissContextMenu();
-      this.inlineInput = { mode: parentKey ? 'createSub' : 'create', parentKey, value: '' };
+    // #6 / #30: inline rename
+    startRename(row: any) {
+      this.ctxMenu = null;
+      this.renamingKey = row.key;
+      this.renameValue = row.label;
       this.$nextTick(() => {
-        const ref = parentKey ? (this.$refs.inlineFieldNested as any) : (this.$refs.inlineFieldTop as any);
-        const el = Array.isArray(ref) ? ref[0] : ref;
-        if (el) el.focus();
-      });
-    },
-
-    startInlineRename(row: any) {
-      this.dismissContextMenu();
-      this.inlineInput = { mode: 'rename', parentKey: row.key, value: row.label, catName: row.key.split('>') };
-      this.$nextTick(() => {
-        const ref = this.$refs.inlineFieldNested as any;
-        const el = Array.isArray(ref) ? ref[0] : ref;
+        const input = (this.$refs.renameInput as HTMLInputElement[] | HTMLInputElement);
+        const el = Array.isArray(input) ? input[0] : input;
         if (el) { el.focus(); el.select(); }
       });
     },
 
-    confirmInlineInput() {
-      if (!this.inlineInput || !this.inlineInput.value.trim()) {
-        this.cancelInlineInput();
-        return;
-      }
+    commitRename(row: any) {
+      const newLabel = this.renameValue.trim();
+      if (!newLabel) { this.cancelRename(); return; }
       const catStore = this.categoryStore as any;
-      const val = this.inlineInput.value.trim();
-
-      if (this.inlineInput.mode === 'create') {
-        catStore.addClass({ name: [val], rule: { type: 'none' }, data: { color: '#4b8bff' } });
-        catStore.save();
-      } else if (this.inlineInput.mode === 'createSub') {
-        const parentName = this.inlineInput.parentKey!.split('>');
-        catStore.addClass({ name: [...parentName, val], rule: { type: 'none' }, data: {} });
-        catStore.save();
-      } else if (this.inlineInput.mode === 'rename') {
-        const oldName = this.inlineInput.catName!;
-        const cat = catStore.get_category(oldName);
-        if (cat) {
-          const newName = [...oldName.slice(0, -1), val];
-          catStore.updateClass({ ...cat, name: newName });
-          catStore.save();
-        }
-      }
-      this.inlineInput = null;
+      const oldName: string[] = row.key.split('>');
+      const cat = catStore.classes.find((c: any) => c.name.join('>') === row.key);
+      if (!cat) { this.cancelRename(); return; }
+      const newName: string[] = [...oldName.slice(0, -1), newLabel];
+      catStore.updateClass({ ...cat, name: newName });
+      catStore.save();
+      this.renamingKey = null;
     },
 
-    cancelInlineInput() {
-      this.inlineInput = null;
+    cancelRename() {
+      this.renamingKey = null;
     },
 
-    // ─── CONTEXT MENU ─────────────────────────────────────────────
-    openContextMenu(row: any, event: MouseEvent) {
-      this.colorPicker = null;
-      this.contextMenu = { x: event.clientX, y: event.clientY, row };
+    // #31 + #38: + button uses inline create, subcategory if selected
+    createTopCategory() {
+      const parentKey = this.selectedCatFilter && this.selectedCatFilter !== '__unassigned__'
+        ? this.selectedCatFilter : '';
+      this.startInlineCreate(parentKey);
     },
 
-    dismissContextMenu() {
-      this.contextMenu = null;
-      this.colorPicker = null;
-      this.quickCatMenu = null;
-    },
-
-    ctxAddSub() {
-      if (!this.contextMenu) return;
-      const row = this.contextMenu.row;
+    // #6 + #38: create child via context menu — inline
+    createChildCategory(row: any) {
+      this.ctxMenu = null;
+      this.$set(this.sidebarExpanded, row.key, true);
       this.startInlineCreate(row.key);
     },
 
-    ctxRename() {
-      if (!this.contextMenu) return;
-      const row = this.contextMenu.row;
-      this.startInlineRename(row);
+    // #38: inline create flow
+    startInlineCreate(parentKey: string) {
+      this.inlineCreateParent = parentKey;
+      this.inlineCreateValue = '';
+      if (parentKey) this.$set(this.sidebarExpanded, parentKey, true);
+      this.$nextTick(() => {
+        const input = this.$refs.inlineCreateInput as HTMLInputElement[] | HTMLInputElement;
+        const el = Array.isArray(input) ? input[0] : input;
+        if (el) el.focus();
+      });
     },
 
-    ctxDelete() {
-      if (!this.contextMenu) return;
-      const row = this.contextMenu.row;
-      const catStore = this.categoryStore as any;
-      const catName = row.key.split('>');
-
-      // Check for children
-      if (row.hasChildren) {
-        if (!confirm(`Delete "${row.label}" and all its subcategories?`)) {
-          this.dismissContextMenu();
-          return;
-        }
-      }
-
-      const cat = catStore.get_category(catName);
-      if (cat) {
-        catStore.removeClass(cat.id);
-        // Also remove children
-        const prefix = row.key + '>';
-        const toRemove = catStore.classes.filter((c: any) => c.name.join('>').startsWith(prefix));
-        for (const child of toRemove) {
-          catStore.removeClass(child.id);
-        }
-        catStore.save();
-      }
-      this.dismissContextMenu();
-    },
-
-    // ─── PRODUCTIVITY SCORE (context menu) ────────────────────────
-    getCatScore(key: string): number {
-      const catStore = this.categoryStore as any;
-      const catName = key.split('>');
-      return catStore.get_category_score(catName) || 0;
-    },
-
-    ctxSetScore(score: number) {
-      if (!this.contextMenu) return;
-      const row = this.contextMenu.row;
-      const catStore = this.categoryStore as any;
-      const catName = row.key.split('>');
-      const cat = catStore.get_category(catName);
-      if (cat) {
-        catStore.updateClass({ ...cat, data: { ...cat.data, score } });
-        catStore.save();
-      }
-      this.dismissContextMenu();
-    },
-
-    // ─── COLOR PICKER ─────────────────────────────────────────────
-    openColorPicker(row: any, event: MouseEvent) {
-      this.contextMenu = null;
-      const catStore = this.categoryStore as any;
-      const catName = row.key.split('>');
-      this.colorPicker = {
-        x: event.clientX + 8,
-        y: event.clientY - 10,
-        row,
-        currentColor: catStore.get_category_color(catName) || '#4b8bff',
-      };
-    },
-
-    pickColor(color: string) {
-      if (!this.colorPicker) return;
-      const row = this.colorPicker.row;
-      const catStore = this.categoryStore as any;
-      const catName = row.key.split('>');
-      const cat = catStore.get_category(catName);
-      if (cat) {
-        catStore.updateClass({ ...cat, data: { ...cat.data, color } });
-        catStore.save();
-      }
-      this.colorPicker = null;
-    },
-
-    // ─── DRAG & DROP ──────────────────────────────────────────────
-    onDragStart(event: DragEvent, type: string, value: string) {
-      if (event.dataTransfer) {
-        event.dataTransfer.setData('text/plain', JSON.stringify({ type, value }));
-        event.dataTransfer.effectAllowed = 'copy';
-      }
-    },
-
-    onDragOver(key: string) {
-      this.dropTarget = key;
-    },
-
-    onDragLeave(key: string) {
-      if (this.dropTarget === key) this.dropTarget = null;
-    },
-
-    onDrop(event: DragEvent, row: any) {
-      this.dropTarget = null;
-      try {
-        const raw = event.dataTransfer?.getData('text/plain');
-        if (!raw) return;
-        const { type, value } = JSON.parse(raw);
-        if (!value) return;
-        const escaped = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = type === 'app' ? ('^' + escaped + '$') : escaped;
-        this._applyRule(value, row, pattern, type === 'app');
-        this.dropSuccess = row.key;
-        setTimeout(() => { this.dropSuccess = null; }, 600);
-      } catch (e) { /* ignore bad drag data */ }
-    },
-
-    // ─── QUICK CATEGORIZE (button on app row) ─────────────────────
-    quickAssignToCategory(appName: string, row: any) {
-      const escaped = appName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const pattern = '^' + escaped + '$';
-      this._applyRule(appName, row, pattern, true);
-      this.quickCatMenu = null;
-    },
-
-    // ─── SHARED RULE HELPER ───────────────────────────────────────
-    // Appends rule, saves immediately, and shows a 4s toast with an Undo button.
-    // Undo reverts the rule and saves the revert so it is also permanent.
-    _applyRule(label: string, row: any, pattern: string, _isApp: boolean) {
-      const catStore = this.categoryStore as any;
-      const catName = row.key.split('>');
-      const cat = catStore.get_category(catName);
-      if (!cat) return;
-
-      // Snapshot previous rule state for undo
-      const prevRegex = cat.rule?.regex ?? null;
-      const prevType = cat.rule?.type ?? null;
-
-      // Apply rule and save immediately so it survives any reload
-      catStore.appendClassRule(cat.id, pattern);
-      catStore.save();
-
-      // Clear any existing toast timer
-      if (this.toast?.timer) clearTimeout(this.toast.timer);
-
-      // Auto-dismiss after 4s
-      const timer = setTimeout(() => { this.toast = null; }, 4000);
-
-      this.toast = {
-        message: `${label} → ${row.label} ✓`,
-        catId: cat.id,
-        prevRegex,
-        prevType,
-        timer,
-      };
-    },
-
-    _undoCategorization() {
-      if (!this.toast) return;
-      if (this.toast.timer) clearTimeout(this.toast.timer);
-      const { catId, prevRegex, prevType } = this.toast;
-      this.toast = null;
-      this._revertRule(catId, prevRegex, prevType);
-      // Save the revert so it persists too
+    commitInlineCreate() {
+      const label = this.inlineCreateValue.trim();
+      if (!label) { this.cancelInlineCreate(); return; }
+      const parentName: string[] = this.inlineCreateParent ? this.inlineCreateParent.split('>') : [];
+      (this.categoryStore as any).addClass({
+        name: [...parentName, label],
+        rule: { type: 'none' },
+        data: { color: '#4b8bff' },
+      });
       (this.categoryStore as any).save();
+      this.inlineCreateParent = null;
+      this.inlineCreateValue = '';
     },
 
-    _revertRule(catId: number, prevRegex: string | null, prevType: string | null) {
+    cancelInlineCreate() {
+      this.inlineCreateParent = null;
+      this.inlineCreateValue = '';
+    },
+
+    // #6: delete category and all its children
+    deleteCategory(row: any) {
+      this.ctxMenu = null;
+      if (!window.confirm(`Delete "${row.label}" and all its subcategories?`)) return;
       const catStore = this.categoryStore as any;
-      const cat = catStore.classes?.find((c: any) => c.id === catId);
-      if (!cat) return;
-      if (prevType === null || prevType === 'none') {
-        cat.rule = { type: 'none' };
-      } else {
-        cat.rule = { type: prevType, regex: prevRegex ?? '' };
-      }
-      catStore.classes_unsaved_changes = true;
+      const prefix = row.key + '>';
+      const idsToDelete: number[] = catStore.classes
+        .filter((c: any) => c.name.join('>') === row.key || c.name.join('>').startsWith(prefix))
+        .map((c: any) => c.id);
+      for (const id of idsToDelete) catStore.removeClass(id);
+      catStore.save();
+      if (this.selectedCatFilter === row.key) this.selectedCatFilter = null;
     },
 
-    // ─── ONBOARDING ───────────────────────────────────────────────
+    // ─── COLOR PICKER (#7) ────────────────────────────────────────
+    openColorPicker(row: any, evt: MouseEvent) {
+      if (this.colorPickerRow && this.colorPickerRow.key === row.key) {
+        this.colorPickerRow = null;
+        return;
+      }
+      const rect = (evt.target as HTMLElement).getBoundingClientRect();
+      this.colorPickerPos = { x: rect.right + 6, y: rect.top };
+      this.colorPickerRow = row;
+      const close = (e: MouseEvent) => {
+        if (!(e.target as HTMLElement).closest('.color-picker-popover')) {
+          this.colorPickerRow = null;
+          window.removeEventListener('click', close);
+        }
+      };
+      this.$nextTick(() => window.addEventListener('click', close));
+    },
+
+    applyColor(color: string) {
+      const catStore = this.categoryStore as any;
+      const cat = catStore.classes.find((c: any) => c.name.join('>') === this.colorPickerRow.key);
+      if (!cat) return;
+      catStore.updateClass({ ...cat, data: { ...cat.data, color } });
+      catStore.save();
+    },
+
+    // ─── PRODUCTIVITY SCORE (#8) ──────────────────────────────────
+    setCategoryScore(row: any, score: number) {
+      this.ctxMenu = null;
+      const catStore = this.categoryStore as any;
+      const cat = catStore.classes.find((c: any) => c.name.join('>') === row.key);
+      if (!cat) return;
+      catStore.updateClass({ ...cat, data: { ...cat.data, score } });
+      catStore.save();
+    },
+
+    // ─── DRAG-TO-CATEGORIZE (#3) ──────────────────────────────────
+    onDragStartApp(appNode: any, evt: DragEvent) {
+      // #43: log to aid debugging
+      const selected = Object.values(this.selectedRowPayloads as Record<string, any>);
+      const items = selected.length > 0 ? selected : [{ type: 'app', app: appNode.app, title: '', rawTitle: '' }];
+      const payload = JSON.stringify(items);
+      evt.dataTransfer!.setData('application/chronio', payload);
+      evt.dataTransfer!.effectAllowed = 'copy';
+      console.warn('[Chronio] dragstart app', appNode.app, 'items:', items.length);
+    },
+
+    onDragStartTitle(app: string, t: any, evt: DragEvent) {
+      // If items are selected and this row is among them, drag all selected
+      const selected = Object.values(this.selectedRowPayloads as Record<string, any>);
+      const items = selected.length > 0
+        ? selected
+        : [{ type: 'title', app, title: t.title, rawTitle: t.title }];
+      evt.dataTransfer!.setData('application/chronio', JSON.stringify(items));
+      evt.dataTransfer!.effectAllowed = 'copy';
+      console.warn('[Chronio] dragstart title', t.title, 'items:', items.length);
+    },
+
+    onDragEnd() {
+      // Clean up any drag state
+      this.dragOverCatKey = null;
+    },
+
+    onDropToCategory(row: any, evt: DragEvent) {
+      this.dragOverCatKey = null;
+      const catStore = this.categoryStore as any;
+      const cat = catStore.classes.find((c: any) => c.name.join('>') === row.key);
+      if (!cat) return;
+
+      // Check if this is a sidebar-category reparent drag (#32)
+      const sidebarKey = evt.dataTransfer!.getData('application/chronio-cat');
+      if (sidebarKey) {
+        this.reparentCategory(sidebarKey, row.key);
+        return;
+      }
+
+      const raw = evt.dataTransfer!.getData('application/chronio');
+      if (!raw) return;
+
+      let items: any[];
+      try {
+        const parsed = JSON.parse(raw);
+        items = Array.isArray(parsed) ? parsed : [parsed];
+      } catch { return; }
+
+      for (const payload of items) {
+        let pattern: string;
+        if (payload.type === 'app') {
+          pattern = '(?m)^' + escapeRegex(payload.app) + '$';
+        } else {
+          pattern = escapeRegex(payload.title);
+        }
+        catStore.appendClassRule(cat.id, pattern);
+      }
+      catStore.save();
+      this.clearSelection();
+    },
+
+    // ─── SIDEBAR DRAG-TO-REPARENT (#32) ──────────────────────────
+    onSidebarDragStart(row: any, evt: DragEvent) {
+      this.draggingSidebarKey = row.key;
+      evt.dataTransfer!.setData('application/chronio-cat', row.key);
+      evt.dataTransfer!.effectAllowed = 'move';
+    },
+
+    onSidebarDragOver(row: any, evt: DragEvent) {
+      const dragKey = this.draggingSidebarKey;
+      // Prevent dropping onto self or descendant
+      if (dragKey && (row.key === dragKey || row.key.startsWith(dragKey + '>'))) return;
+      this.dragOverCatKey = row.key;
+    },
+
+    onSidebarDrop(row: any, evt: DragEvent) {
+      this.dragOverCatKey = null;
+      this.draggingSidebarKey = null;
+
+      // #46: handle reorder-drag from handle
+      const reorderKey = evt.dataTransfer!.getData('application/chronio-reorder');
+      if (reorderKey && reorderKey !== row.key) {
+        this.reorderCategory(reorderKey, row.key);
+        return;
+      }
+
+      // #32: handle reparent drag from row
+      const sidebarKey = evt.dataTransfer!.getData('application/chronio-cat');
+      if (sidebarKey && sidebarKey !== row.key && !row.key.startsWith(sidebarKey + '>')) {
+        this.reparentCategory(sidebarKey, row.key);
+        return;
+      }
+
+      // Activity categorize drop
+      this.onDropToCategory(row, evt);
+    },
+
+    // #46: reorder category among siblings (swap positions in classes array)
+    reorderCategory(fromKey: string, toKey: string) {
+      const catStore = this.categoryStore as any;
+      const fromName = fromKey.split('>');
+      const toName = toKey.split('>');
+      // Only reorder within same parent
+      const fromParent = fromName.slice(0, -1).join('>');
+      const toParent = toName.slice(0, -1).join('>');
+      if (fromParent !== toParent) return;
+
+      const classes = catStore.classes;
+      const fromIdx = classes.findIndex((c: any) => c.name.join('>') === fromKey);
+      const toIdx = classes.findIndex((c: any) => c.name.join('>') === toKey);
+      if (fromIdx < 0 || toIdx < 0) return;
+
+      const [item] = classes.splice(fromIdx, 1);
+      const newToIdx = classes.findIndex((c: any) => c.name.join('>') === toKey);
+      classes.splice(newToIdx, 0, item);
+      catStore.save();
+    },
+
+    reparentCategory(fromKey: string, toKey: string) {
+      const catStore = this.categoryStore as any;
+      const oldName: string[] = fromKey.split('>');
+      const newParent: string[] = toKey.split('>');
+      const leaf = oldName[oldName.length - 1];
+      const newName: string[] = [...newParent, leaf];
+
+      const cat = catStore.classes.find((c: any) => c.name.join('>') === fromKey);
+      if (!cat) return;
+      catStore.updateClass({ ...cat, name: newName });
+      catStore.save();
+    },
+
+    // ─── MULTI-SELECT (#37) ───────────────────────────────────────
+    appRowKey(catKey: string, app: string): string {
+      return catKey + '/APP:' + app;
+    },
+
+    titleRowKey(catKey: string, app: string, title: string): string {
+      return catKey + '/APP:' + app + '/T:' + title;
+    },
+
+    // Unified view app rows: modifier key → multiselect, plain click → expand toggle
+    onUnifiedAppRowClick(catKey: string, appNode: any, evt: MouseEvent) {
+      if (evt.metaKey || evt.ctrlKey || evt.shiftKey) {
+        const key = this.appRowKey(catKey, appNode.app);
+        this.onActivityRowClick(key, { type: 'app', app: appNode.app, title: '' }, evt);
+      } else {
+        this.toggleExpandApp(catKey + '/' + appNode.app);
+      }
+    },
+
+    onActivityRowClick(key: string, payload: any, evt: MouseEvent) {
+      evt.preventDefault();
+      if (evt.shiftKey && this.lastClickedKey) {
+        // Range select
+        const rows = this.visibleActivityRowKeys as any[];
+        const fromIdx = rows.findIndex((r: any) => r.key === this.lastClickedKey);
+        const toIdx = rows.findIndex((r: any) => r.key === key);
+        if (fromIdx >= 0 && toIdx >= 0) {
+          const lo = Math.min(fromIdx, toIdx);
+          const hi = Math.max(fromIdx, toIdx);
+          for (let i = lo; i <= hi; i++) {
+            this.$set(this.selectedRowKeys, rows[i].key, true);
+            this.$set(this.selectedRowPayloads, rows[i].key, rows[i].payload);
+          }
+        }
+      } else if (evt.metaKey || evt.ctrlKey) {
+        // Toggle
+        if (this.selectedRowKeys[key]) {
+          this.$delete(this.selectedRowKeys, key);
+          this.$delete(this.selectedRowPayloads, key);
+        } else {
+          this.$set(this.selectedRowKeys, key, true);
+          this.$set(this.selectedRowPayloads, key, payload);
+        }
+      } else {
+        // Single select — clear others
+        this.selectedRowKeys = {};
+        this.selectedRowPayloads = {};
+        this.$set(this.selectedRowKeys, key, true);
+        this.$set(this.selectedRowPayloads, key, payload);
+      }
+      this.lastClickedKey = key;
+    },
+
+    clearSelection() {
+      this.selectedRowKeys = {};
+      this.selectedRowPayloads = {};
+      this.lastClickedKey = null;
+    },
+
+    // ─── KEYBOARD NAVIGATION (#44) ───────────────────────────────
+    onGlobalKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); this.prevDay(); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); if (!this.isToday) this.nextDay(); }
+      else if (e.key === 't' || e.key === 'T') { e.preventDefault(); this.goToToday(); }
+      else if (e.key === 'Escape') { this.clearSelection(); }
+    },
+
+    goToToday() {
+      const today = get_today_with_offset(this.settingsStore.startOfDay);
+      if (this.selectedDate !== today) {
+        this.selectedDate = today;
+        this.refresh();
+      }
+    },
+
+    // #45: go to previous day (best effort — just go back one day)
+    goToPrevActiveDay() {
+      this.prevDay();
+    },
+
+    // ─── SIDEBAR REORDER (#46) ────────────────────────────────────
+    onHandleDragStart(row: any, evt: DragEvent) {
+      this.reorderDragKey = row.key;
+      evt.dataTransfer!.setData('application/chronio-reorder', row.key);
+      evt.dataTransfer!.effectAllowed = 'move';
+    },
+
+    // ─── ONBOARDING (#12) ────────────────────────────────────────
+    checkOnboarding() {
+      if (!localStorage.getItem('chronio_onboarding_complete')) {
+        this.showOnboarding = true;
+      }
+    },
+
     dismissOnboarding() {
       this.showOnboarding = false;
-      localStorage.setItem('chronio_onboarding_complete', 'true');
+      localStorage.setItem('chronio_onboarding_complete', '1');
     },
 
-    nextOnboardingStep() {
-      if (this.onboardingStep >= 2) {
-        this.dismissOnboarding();
-      } else {
-        this.onboardingStep++;
+    // #11: persist expand/collapse to localStorage
+    saveExpandState() {
+      try {
+        localStorage.setItem('chronio-sidebar-expanded', JSON.stringify(this.sidebarExpanded));
+        localStorage.setItem('chronio-expanded-cats', JSON.stringify(this.expandedCats));
+      } catch (e) {
+        // localStorage unavailable
+      }
+    },
+
+    loadExpandState() {
+      try {
+        const sidebar = localStorage.getItem('chronio-sidebar-expanded');
+        if (sidebar) this.sidebarExpanded = JSON.parse(sidebar);
+        const cats = localStorage.getItem('chronio-expanded-cats');
+        if (cats) this.expandedCats = JSON.parse(cats);
+      } catch (e) {
+        // localStorage unavailable
+      }
+    },
+
+    // ─── MINI CALENDAR (#52) ─────────────────────────────────────────
+    prevCalMonth() {
+      const m = moment().year(this.calendarYear).month(this.calendarMonth).subtract(1, 'month');
+      this.calendarYear = m.year();
+      this.calendarMonth = m.month();
+      this.loadCalendarDots();
+    },
+    nextCalMonth() {
+      const m = moment().year(this.calendarYear).month(this.calendarMonth).add(1, 'month');
+      this.calendarYear = m.year();
+      this.calendarMonth = m.month();
+      this.loadCalendarDots();
+    },
+    async loadCalendarDots() {
+      const monthStart = moment().year(this.calendarYear).month(this.calendarMonth).startOf('month').toDate();
+      const monthEnd = moment().year(this.calendarYear).month(this.calendarMonth).endOf('month').toDate();
+      const params = { start: monthStart, end: monthEnd, limit: -1 };
+      const allHosts: string[] = (this.bucketsStore.hosts as string[])
+        .filter((h: string) => h && h !== 'unknown' && !/^\d+\.\d+\.\d+\.\d+$/.test(h));
+      const allWindowBuckets: string[] = allHosts.flatMap((h: string) => this.bucketsStore.bucketsWindow(h));
+      try {
+        const arrays = await Promise.all(
+          allWindowBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
+        );
+        const dots: Record<string, boolean> = {};
+        arrays.flat().forEach((e: any) => {
+          const d = moment(e.timestamp).format('YYYY-MM-DD');
+          dots[d] = true;
+        });
+        this.calendarDots = dots;
+      } catch (e) {
+        // silently ignore calendar fetch errors
       }
     },
 
     prevDay() {
       this.selectedDate = moment(this.selectedDate).subtract(1, 'day').format('YYYY-MM-DD');
       this.refresh();
-      this._startLiveRefresh();
     },
     nextDay() {
       if (this.isToday) return;
       this.selectedDate = moment(this.selectedDate).add(1, 'day').format('YYYY-MM-DD');
       this.refresh();
-      this._startLiveRefresh();
     },
     onDateChange(dateStr: string) {
       this.selectedDate = dateStr;
       this.showDatePicker = false;
       this.refresh();
-      this._startLiveRefresh();
     },
 
-    async refresh() {
+    async refresh(silent = false) {
       if (!this.host) return;
-      this.loading = true;
+      // #35: skip silent refresh if a full (non-silent) refresh is already running
+      if (silent && this.isRefreshing) return;
+      this.isRefreshing = true;
+      if (!silent) this.loading = true;
 
-      const settingsStore = this.settingsStore;
-      const timeperiod = dateToTimeperiod(this.selectedDate, settingsStore.startOfDay);
+      try {
+        const settingsStore = this.settingsStore;
+        const timeperiod = dateToTimeperiod(this.selectedDate, settingsStore.startOfDay);
 
-      await this.activityStore.ensure_loaded({
-        timeperiod,
-        host: this.host,
-        filter_afk: true,
-        include_audible: false,
-        include_stopwatch: false,
-        force: true,
-        always_active_pattern: settingsStore.always_active_pattern,
-      });
+        // Collect all same-machine hostname variants (exclude IP addresses and 'unknown')
+        const allHosts: string[] = (this.bucketsStore.hosts as string[])
+          .filter((h: string) => h && h !== 'unknown' && !/^\d+\.\d+\.\d+\.\d+$/.test(h));
 
-      const windowBuckets = this.bucketsStore.bucketsWindow(this.host);
-      const afkBuckets = this.bucketsStore.bucketsAFK(this.host);
-      const startDate = moment(this.selectedDate).startOf('day').toDate();
-      const endDate = moment(this.selectedDate).endOf('day').toDate();
-      const params = { start: startDate, end: endDate, limit: -1 };
+        const allWindowBuckets: string[] = allHosts.flatMap((h: string) => this.bucketsStore.bucketsWindow(h));
+        const allAfkBuckets: string[] = allHosts.flatMap((h: string) => this.bucketsStore.bucketsAFK(h));
 
-      const [windowEvts, afkEvts] = await Promise.all([
-        windowBuckets.length > 0
-          ? getClient().getEvents(windowBuckets[0], params)
-          : Promise.resolve([]),
-        afkBuckets.length > 0
-          ? getClient().getEvents(afkBuckets[0], params)
-          : Promise.resolve([]),
-      ]);
+        const startDate = moment(this.selectedDate).startOf('day').toDate();
+        const endDate = moment(this.selectedDate).endOf('day').toDate();
+        const params = { start: startDate, end: endDate, limit: -1 };
 
-      this.windowEvents = windowEvts || [];
-      this.afkEvents = afkEvts || [];
-      this.loading = false;
+        // Fetch from all same-machine buckets in parallel and merge
+        const windowEvtArrays = await Promise.all(
+          allWindowBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
+        );
+        const afkEvtArrays = await Promise.all(
+          allAfkBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
+        );
 
-      // Auto-expand all categories if the user has no saved expand state yet.
-      // This makes draggable app rows immediately visible without requiring
-      // manual expansion first (fixes drag-to-categorize discoverability).
-      if (!localStorage.getItem('chronio_expandedCats')) {
-        this.$nextTick(() => {
-          const expanded: Record<string, boolean> = {};
-          for (const cat of (this as any).filteredActivitiesTree) {
-            expanded[cat.catKey] = true;
-          }
-          (this as any).expandedCats = expanded;
-        });
+        // Merge and sort by timestamp descending
+        const mergeEvents = (arrays: any[][]) =>
+          arrays.flat().sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        this.windowEvents = mergeEvents(windowEvtArrays);
+        this.afkEvents = mergeEvents(afkEvtArrays);
+        if (!silent) {
+          this.loading = false;
+          this.$nextTick(() => this.scrollTimeline());
+        }
+      } finally {
+        this.isRefreshing = false;
       }
+    },
+
+    startLiveRefresh() {
+      this.stopLiveRefresh();
+      // Refresh every 60s silently on today's view only
+      this.refreshTimer = setInterval(() => {
+        if (this.isToday) this.refresh(true);
+      }, 60000);
+    },
+
+    stopLiveRefresh() {
+      if (this.refreshTimer) {
+        clearInterval(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+    },
+
+    scrollTimeline() {
+      const el = this.$refs.timelineScroll as HTMLElement | undefined;
+      if (!el) return;
+      const SCALE = HOUR_PX / 3600000;
+      const { canvasStartMs, nowPx } = this.timelineCanvas;
+      let targetPx: number;
+      if (this.isToday && nowPx !== null) {
+        // Scroll so "now" sits about 1/3 from the top
+        targetPx = nowPx - el.clientHeight / 3;
+      } else {
+        // Scroll to top (canvas already starts at first event / 8am)
+        targetPx = 0;
+      }
+      el.scrollTop = Math.max(0, targetPx);
     },
   },
 
@@ -1297,39 +1620,45 @@ export default {
     host() {
       if (this.host) this.refresh();
     },
+    // #39: auto-expand app rows when a category filter is selected
+    selectedCatFilter(newVal: string | null) {
+      if (newVal && newVal !== '__unassigned__') {
+        this.$nextTick(() => {
+          for (const catNode of this.filteredActivitiesTree as any[]) {
+            for (const appNode of catNode.apps) {
+              this.$set(this.expandedApps, catNode.catKey + '/' + appNode.app, true);
+            }
+          }
+        });
+      }
+    },
   },
 
   async mounted() {
-    // Check onboarding
-    if (!localStorage.getItem('chronio_onboarding_complete')) {
-      this.showOnboarding = true;
-    }
-
-    // Restore expand/collapse state from localStorage
-    try {
-      const cats = localStorage.getItem('chronio_expandedCats');
-      const apps = localStorage.getItem('chronio_expandedApps');
-      const sidebar = localStorage.getItem('chronio_sidebarExpanded');
-      if (cats) this.expandedCats = JSON.parse(cats);
-      if (apps) this.expandedApps = JSON.parse(apps);
-      if (sidebar) this.sidebarExpanded = JSON.parse(sidebar);
-    } catch (e) { /* ignore parse errors */ }
-
     const settingsStore = this.settingsStore;
     await settingsStore.ensureLoaded();
     this.selectedDate = get_today_with_offset(settingsStore.startOfDay);
+    const today = moment(this.selectedDate);
+    this.calendarYear = today.year();
+    this.calendarMonth = today.month();
     await this.bucketsStore.ensureLoaded();
     await (this.categoryStore as any).load();
+    this.loadExpandState();
+    this.checkOnboarding();
     if (this.host) {
       await this.refresh();
+      this.loadCalendarDots();
     } else {
       this.loading = false;
     }
-    this._startLiveRefresh();
+    this.startLiveRefresh();
+    this.keyHandler = this.onGlobalKeyDown.bind(this);
+    window.addEventListener('keydown', this.keyHandler);
   },
 
   beforeDestroy() {
-    this._stopLiveRefresh();
+    this.stopLiveRefresh();
+    if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
   },
 };
 </script>
@@ -1349,7 +1678,8 @@ export default {
               radial-gradient(900px 700px at 90% 10%, rgba(255, 110, 70, 0.12), transparent 55%),
               var(--bg);
   font-family: system-ui, -apple-system, sans-serif;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -1442,6 +1772,17 @@ export default {
   .value { color: var(--text); font-weight: 600; }
 }
 
+.chronio-afk-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+  cursor: default;
+  &.active { background: rgba(29, 185, 84, 0.15); color: #1db954; }
+  &.no-data { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+}
+
 .chronio-search {
   display: inline-flex;
   align-items: center;
@@ -1501,7 +1842,6 @@ export default {
   border-radius: 0;
   &:hover { color: var(--text); background: rgba(255,255,255,0.04); }
   &.active { color: #4b8bff; background: rgba(75,139,255,0.08); font-weight: 500; }
-  &.disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
 }
 
 .sidebar-tree {
@@ -1590,11 +1930,321 @@ export default {
   flex-shrink: 0;
 }
 
+.sr-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(75,139,255,0.5);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 1px 6px;
+  outline: none;
+  height: 22px;
+  box-sizing: border-box;
+}
+
+/* ─── MINI CALENDAR (#52) */
+.sidebar-calendar {
+  padding: 10px 10px 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.cal-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.cal-nav {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  &:hover { color: var(--text); }
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+.cal-dow {
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+  padding: 2px 0;
+  font-weight: 600;
+}
+.cal-day {
+  position: relative;
+  text-align: center;
+  font-size: 11px;
+  padding: 4px 2px 6px;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: default;
+  &.in-month {
+    color: var(--text);
+    cursor: pointer;
+    &:hover { background: rgba(255,255,255,0.06); }
+  }
+  &.is-today {
+    background: rgba(75,139,255,0.12);
+    color: #7db0ff;
+    font-weight: 700;
+  }
+  &.is-selected {
+    background: rgba(75,139,255,0.25);
+    color: #fff;
+    font-weight: 700;
+  }
+}
+.cal-dot {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #4b8bff;
+  .is-selected & { background: #fff; }
+}
+
+.sidebar-ctx-menu {
+  position: fixed;
+  z-index: 999;
+  background: #1e2330;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 0;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  min-width: 160px;
+}
+
+.ctx-item {
+  padding: 7px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+  &:hover { background: rgba(255,255,255,0.06); }
+  &.ctx-danger { color: #ff6b6b; }
+}
+
+.ctx-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.ctx-score-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ctx-score-btn {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  &:hover { border-color: var(--border-hover); color: var(--text); }
+  &.active { background: rgba(29,185,84,0.2); border-color: #1db954; color: #1db954; }
+  &.distracting.active { background: rgba(239,68,68,0.2); border-color: #ef4444; color: #ef4444; }
+  &.neutral.active { background: rgba(255,255,255,0.1); border-color: var(--border-hover); color: var(--text); }
+}
+
+.sr-score-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  &.score-productive { background: #1db954; }
+  &.score-distracting { background: #ef4444; }
+}
+
+/* #7: Color picker popover */
+.color-picker-popover {
+  position: fixed;
+  z-index: 1000;
+  background: #1e2330;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  min-width: 180px;
+}
+
+.cp-swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.cp-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.1s, transform 0.1s;
+  &:hover { transform: scale(1.15); }
+  &.selected { border-color: #fff; }
+}
+
+.cp-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  input[type="color"] {
+    width: 28px;
+    height: 22px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: none;
+    cursor: pointer;
+    padding: 1px;
+  }
+}
+
 .sr-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  cursor: pointer;
+  transition: transform 0.15s;
+  &:hover { transform: scale(1.4); }
+}
+
+/* #3: Drag styles */
+.act-row--app,
+.act-row--title {
+  &[draggable="true"] { cursor: grab; }
+  &[draggable="true"]:active { cursor: grabbing; }
+}
+
+.act-drag-hint {
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+
+.act-row--app:hover .act-drag-hint {
+  opacity: 0.5;
+}
+
+.sidebar-cat-row.drop-target {
+  background: rgba(75, 139, 255, 0.2) !important;
+  border: 1px dashed rgba(75, 139, 255, 0.6);
+}
+
+/* #12: Onboarding overlay */
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(4px);
+}
+
+.onboarding-modal {
+  background: #1a1f2e;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px 48px;
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+
+.onboarding-step {
+  min-height: 130px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  .ob-emoji { font-size: 48px; line-height: 1; }
+  h2 { font-size: 20px; font-weight: 700; color: var(--text); margin: 0; }
+  p { font-size: 14px; color: var(--muted); line-height: 1.6; margin: 0; }
+}
+
+.ob-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 24px 0 20px;
+}
+
+.ob-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  cursor: pointer;
+  transition: background 0.2s;
+  &.active { background: #4b8bff; }
+}
+
+.ob-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.ob-btn-primary {
+  background: #4b8bff;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  &:hover { background: #3a7aee; }
+}
+
+.ob-btn-ghost {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 24px;
+  font-size: 14px;
+  cursor: pointer;
+  &:hover { color: var(--text); border-color: var(--border-hover); }
+}
+
+/* #34: Multi-select highlight */
+.act-row--title.row-selected {
+  background: rgba(75, 139, 255, 0.15) !important;
+  border-left: 2px solid #4b8bff;
 }
 
 /* ── CENTER ──────────────────────────────────────────────────────── */
@@ -1644,7 +2294,6 @@ export default {
   flex: 1;
   overflow-y: auto;
   padding: 4px 0;
-  position: relative;
 }
 
 .act-empty {
@@ -1683,12 +2332,12 @@ export default {
 }
 
 .act-indent {
-  width: 20px;
+  width: 32px;
   flex-shrink: 0;
 }
 
 .act-indent2 {
-  width: 36px;
+  width: 52px;
   flex-shrink: 0;
 }
 
@@ -1712,38 +2361,23 @@ export default {
   }
 }
 
-.act-row--chrono {
-  gap: 8px;
+.act-row--chrono-group {
+  cursor: pointer;
+  font-weight: 500;
+  gap: 7px;
+  .act-caret { font-size: 10px; color: var(--muted); width: 12px; flex-shrink: 0; }
+  .act-app { font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .act-time-range { font-size: 11px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+  &:hover { background: rgba(255,255,255,0.05); }
+}
+
+.act-row--chrono-sub {
   cursor: default;
-  align-items: flex-start;
-  padding-top: 5px;
-  padding-bottom: 5px;
-  .act-app-icon { margin-top: 2px; }
-  .act-dot { margin-top: 4px; }
-  .act-chrono-content {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .act-chrono-top {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
-  .act-app { font-size: 12px; font-weight: 500; white-space: nowrap; flex: 1; overflow: hidden; text-overflow: ellipsis; }
-  .act-time { font-size: 11px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
-  .act-dur { flex-shrink: 0; }
-  .act-chrono-title {
-    font-size: 11px;
-    color: var(--muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100%;
-  }
+  min-height: 28px;
+  &:hover { background: rgba(255,255,255,0.02); }
+  .act-app-label { font-size: 12px; color: rgba(255,255,255,0.35); white-space: nowrap; flex-shrink: 0; margin-right: 3px; }
+  .act-title { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .act-time { font-size: 11px; color: var(--muted); white-space: nowrap; flex-shrink: 0; margin-right: 4px; }
 }
 
 /* ── RIGHT TIMELINE ──────────────────────────────────────────────── */
@@ -1755,84 +2389,108 @@ export default {
   background: rgba(15, 17, 23, 0.4);
 }
 
-.tl-filter-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 12px;
-  margin: 8px 12px 0;
-  background: var(--accent, #3c7bff22);
-  border: 1px solid var(--accent, #3c7bff55);
-  border-radius: 20px;
-  font-size: 11px;
-  color: var(--text-primary, #e0e6f0);
-  width: fit-content;
-}
-
-.tl-filter-clear {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--muted, #8899aa);
-  font-size: 14px;
-  line-height: 1;
-  padding: 0 2px;
-  &:hover {
-    color: var(--text-primary, #e0e6f0);
-  }
-}
-
 .timeline-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  position: relative;
+  padding: 8px 10px 24px 0;
 }
 
-.tl-time {
+/* The full-day canvas: position:relative so children can be absolute */
+.timeline-canvas {
+  position: relative;
+  margin-left: 44px; /* room for hour labels */
+  margin-right: 4px;
+}
+
+/* Each hour row: label on left, gridline stretching right */
+.tl-hour {
+  position: absolute;
+  left: -44px;
+  right: 0;
+  display: flex;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.tl-hour-label {
   font-size: 10px;
   color: var(--muted);
-  padding: 4px 0 2px;
-  letter-spacing: 0.4px;
+  width: 36px;
+  text-align: right;
+  padding-right: 8px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: -1px;
 }
 
-.tl-block {
-  border-radius: 10px;
-  padding: 8px 12px;
-  color: #fff;
-  cursor: pointer;
-  transition: transform 0.1s ease, box-shadow 0.1s ease, opacity 0.15s ease;
-  flex-shrink: 0;
-  &:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+.tl-hour-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* "Now" red indicator */
+.tl-now-line {
+  position: absolute;
+  left: -44px;
+  right: 0;
+  height: 2px;
+  background: #ff4040;
+  z-index: 5;
+  pointer-events: none;
+  &::after {
+    content: '';
+    position: absolute;
+    left: 44px;
+    top: -4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ff4040;
   }
 }
 
-.tl-block-header {
+/* Activity blocks: absolutely placed on the canvas */
+.tl-block {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: filter 0.15s;
+  z-index: 2;
+  &:hover {
+    filter: brightness(1.15);
+    z-index: 3;
+  }
+}
+
+.tl-block-inner {
+  padding: 3px 8px;
+  height: 100%;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
 }
 
 .tl-title {
   font-weight: 600;
-  font-size: 12px;
+  font-size: 11px;
+  color: #fff;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1;
+  line-height: 1.3;
 }
 
 .tl-time-range {
   font-size: 10px;
-  opacity: 0.85;
+  color: rgba(255,255,255,0.75);
   white-space: nowrap;
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chronio-empty {
@@ -1841,387 +2499,73 @@ export default {
   padding: 12px 0;
 }
 
-/* ── NOW LINE ────────────────────────────────────────────────────── */
-.tl-now-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: #ff4444;
-  z-index: 5;
-  pointer-events: none;
-}
-
-.tl-now-label {
-  position: absolute;
-  top: -8px;
-  right: 4px;
-  font-size: 10px;
-  color: #ff4444;
-  font-weight: 600;
-}
-
-/* ── TOOLTIP ─────────────────────────────────────────────────────── */
-.tl-tooltip {
-  position: fixed;
-  z-index: 100;
-  background: rgba(15, 17, 23, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  padding: 8px 12px;
-  pointer-events: none;
-  max-width: 280px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-}
-
-.tl-tooltip-app {
-  font-weight: 600;
+/* ── DRAG HANDLE (#46) ───────────────────────────────────────────── */
+.sr-drag-handle {
+  opacity: 0;
+  color: var(--muted);
   font-size: 12px;
-  color: #e9eefb;
-  margin-bottom: 2px;
+  cursor: grab;
+  flex-shrink: 0;
+  padding: 0 2px;
+  transition: opacity 0.15s;
+  user-select: none;
 }
 
-.tl-tooltip-title {
-  font-size: 11px;
-  color: #9aa4b2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 4px;
+.sidebar-cat-row:hover .sr-drag-handle {
+  opacity: 0.5;
 }
 
-.tl-tooltip-cat {
-  font-size: 10px;
-  color: #6b7a8d;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+.sidebar-cat-row:hover .sr-drag-handle:hover {
+  opacity: 1;
+  color: var(--text);
 }
 
-.tl-tooltip-meta {
-  font-size: 11px;
-  color: #9aa4b2;
+/* ── INLINE CREATE (#38) ──────────────────────────────────────────── */
+.sidebar-inline-create {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 10px;
+  margin: 1px 6px;
 }
 
-/* ── PRODUCTIVITY COLORS ─────────────────────────────────────────── */
-.prod-green { color: #22c55e !important; }
-.prod-yellow { color: #f59e0b !important; }
-.prod-red { color: #ef4444 !important; }
-.prod-muted { color: var(--muted) !important; }
-.prod-hint {
-  display: inline-flex;
+/* ── EMPTY STATE (#45) ────────────────────────────────────────────── */
+.act-day-empty {
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  margin-left: 5px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 1px solid var(--muted);
-  font-size: 10px;
+  flex: 1;
+  gap: 10px;
+  padding: 40px 20px;
   color: var(--muted);
-  cursor: help;
-  line-height: 1;
+  .act-empty-icon { font-size: 32px; opacity: 0.3; }
+  p { font-size: 14px; margin: 0; text-align: center; }
 }
 
-/* ── INLINE INPUT ───────────────────────────────────────────────── */
-.sidebar-inline-input {
-  padding: 3px 12px;
-}
-
-.sidebar-inline-field {
-  width: 100%;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(75, 139, 255, 0.4);
-  border-radius: 4px;
-  color: var(--text);
-  font-size: 12px;
-  padding: 4px 8px;
-  outline: none;
-  &:focus { border-color: #4b8bff; box-shadow: 0 0 0 2px rgba(75, 139, 255, 0.2); }
-}
-
-/* ── CONTEXT MENU ───────────────────────────────────────────────── */
-.ctx-menu {
-  position: fixed;
-  z-index: 200;
-  background: rgba(22, 26, 36, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  padding: 4px 0;
-  min-width: 160px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-}
-
-.ctx-item {
-  padding: 7px 14px;
-  font-size: 12px;
-  color: var(--text);
-  cursor: pointer;
-  &:hover { background: rgba(75, 139, 255, 0.15); }
-}
-
-.ctx-danger { color: #ef4444; }
-.ctx-divider { height: 1px; background: var(--border); margin: 4px 0; }
-
-/* ── COLOR PICKER ───────────────────────────────────────────────── */
-.color-picker-popover {
-  position: fixed;
-  z-index: 200;
-  background: rgba(22, 26, 36, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
-  padding: 10px;
-  display: grid;
-  grid-template-columns: repeat(4, 28px);
-  gap: 6px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-}
-
-.color-swatch {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  cursor: pointer;
-  border: 2px solid transparent;
-  transition: border-color 0.15s, transform 0.1s;
-  &:hover { transform: scale(1.1); }
-  &.active { border-color: #fff; }
-}
-
-.color-custom {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
-  margin-top: 4px;
-  label { font-size: 11px; color: var(--muted); }
-  .color-input {
-    width: 32px;
-    height: 24px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    cursor: pointer;
-    background: transparent;
-    padding: 0;
-  }
-}
-
-/* ── DROP TARGET LABEL ──────────────────────────────────────────── */
-.sr-drop-label {
-  font-size: 11px;
-  color: #7db0ff;
-  font-weight: 600;
-  white-space: nowrap;
-  margin-left: 4px;
-  flex-shrink: 0;
-}
-
-/* ── TOAST NOTIFICATION ─────────────────────────────────────────── */
-.chronio-toast {
-  position: fixed;
-  bottom: 32px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(30, 35, 50, 0.97);
-  color: #e9eefb;
-  padding: 10px 14px 10px 18px;
-  border-radius: 10px;
-  z-index: 2000;
-  font-size: 13px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  white-space: nowrap;
-}
-.toast-message { flex: 1; }
-.toast-undo {
-  background: transparent;
-  border: 1px solid rgba(255,255,255,0.2);
-  color: #e9eefb;
-  border-radius: 5px;
-  padding: 3px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  &:hover { background: rgba(255,255,255,0.1); }
-}
-
-.toast-enter-active, .toast-leave-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
-}
-.toast-enter, .toast-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(8px);
-}
-
-/* ── QUICK-CATEGORIZE BUTTON & MENU ─────────────────────────────── */
-.act-quick-cat-btn {
+.act-empty-prev {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--muted);
-  border-radius: 4px;
-  padding: 2px 7px;
-  font-size: 12px;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
   cursor: pointer;
-  flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  margin-top: 6px;
   &:hover { color: var(--text); border-color: var(--border-hover); }
 }
 
-.act-row--app:hover .act-quick-cat-btn {
-  opacity: 1;
-}
-
-.act-quick-cat-menu {
-  position: absolute;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  z-index: 100;
-  min-width: 160px;
-  max-height: 240px;
-  overflow-y: auto;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  right: 12px;
-}
-
-.act-quick-cat-item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 8px;
-  font-size: 12px;
-  color: var(--text);
-  cursor: pointer;
-  &:hover { background: rgba(75, 139, 255, 0.15); }
-}
-
-.act-quick-cat-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-/* ── DRAG & DROP FEEDBACK ───────────────────────────────────────── */
-.drop-target {
-  background: rgba(75, 139, 255, 0.2) !important;
-  border: 1px dashed rgba(75, 139, 255, 0.5);
-}
-
-.drop-success {
-  background: rgba(34, 197, 94, 0.2) !important;
-  transition: background 0.3s ease;
-}
-
-.act-row--app[draggable="true"],
-.act-row--title[draggable="true"] {
-  cursor: grab;
-  &:active { cursor: grabbing; opacity: 0.6; }
-}
-
-.act-drag-handle {
-  font-size: 12px;
+/* ── APPS VIEW (#40) act-expand reuse ────────────────────────────── */
+.act-row--app .act-expand {
+  font-size: 10px;
   color: var(--muted);
-  opacity: 0.4;
-  margin-right: 4px;
-  user-select: none;
+  width: 12px;
   flex-shrink: 0;
-  .act-row--app:hover & { opacity: 0.8; }
-}
-
-.sr-dot {
   cursor: pointer;
-  transition: transform 0.1s;
-  &:hover { transform: scale(1.4); }
 }
-
-/* ── ONBOARDING ─────────────────────────────────────────────────── */
-.onboarding-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  backdrop-filter: blur(4px);
-}
-
-.onboarding-card {
-  background: rgba(22, 26, 36, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 16px;
-  padding: 40px 48px;
-  max-width: 440px;
-  text-align: center;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
-}
-
-.onboarding-step {
-  h2 {
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--text);
-    margin: 12px 0 8px;
-  }
-  p {
-    font-size: 14px;
-    color: var(--muted);
-    line-height: 1.6;
-    margin: 0;
-  }
-}
-
-.onboarding-icon {
-  font-size: 36px;
-}
-
-.onboarding-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 28px;
-}
-
-.onboarding-skip {
-  background: transparent;
-  border: 0;
-  color: var(--muted);
-  font-size: 13px;
-  cursor: pointer;
-  padding: 6px 12px;
-  &:hover { color: var(--text); }
-}
-
-.onboarding-next {
-  background: #4b8bff;
-  color: #fff;
-  border: 0;
-  border-radius: 8px;
-  padding: 8px 20px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s;
-  &:hover { background: #3a7aee; }
-}
-
-.onboarding-dots {
-  display: flex;
-  gap: 6px;
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.2);
-    transition: background 0.2s;
-    &.active { background: #4b8bff; }
-  }
+.act-row--app .act-expand-spacer {
+  width: 12px;
+  flex-shrink: 0;
 }
 
 /* ── SCROLLBAR STYLING ───────────────────────────────────────────── */

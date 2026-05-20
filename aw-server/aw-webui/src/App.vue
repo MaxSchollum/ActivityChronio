@@ -1,8 +1,7 @@
 <template lang="pug">
 div#wrapper(v-if="loaded")
-  //- Standalone routes (e.g. Chronio) get no AW chrome — just the view
-  router-view(v-if="isStandalone")
-
+  template(v-if="noShell")
+    router-view
   template(v-else)
     aw-header
     div(:class="{'container': !fullContainer, 'container-fluid': fullContainer}").px-0.px-md-2
@@ -35,8 +34,8 @@ export default {
     fullContainer() {
       return this.$route.meta.fullContainer;
     },
-    isStandalone() {
-      return this.$route.meta.standalone;
+    noShell() {
+      return this.$route.meta.noShell;
     },
   },
 
