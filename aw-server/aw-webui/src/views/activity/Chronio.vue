@@ -221,7 +221,7 @@ div.chronio-view
                 draggable="true"
                 :class="{'row-selected': selectedRowKeys[appRowKey(catNode.catKey, appNode.app)]}"
                 @click="onUnifiedAppRowClick(catNode.catKey, appNode, $event)"
-                @dragstart="onDragStartApp(appNode, $event)"
+                @dragstart="onDragStartApp(appNode, $event, appRowKey(catNode.catKey, appNode.app))"
                 @dragend="onDragEnd"
               )
                 .act-indent
@@ -237,7 +237,7 @@ div.chronio-view
                   draggable="true"
                   :class="{'row-selected': selectedRowKeys[titleRowKey(catNode.catKey, appNode.app, t.title)]}"
                   @click="onActivityRowClick(titleRowKey(catNode.catKey, appNode.app, t.title), {type:'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title}, $event)"
-                  @dragstart="onDragStartTitle(appNode.app, t, $event)"
+                  @dragstart="onDragStartTitle(appNode.app, t, $event, titleRowKey(catNode.catKey, appNode.app, t.title))"
                   @dragend="onDragEnd"
                 )
                   .act-indent2
@@ -252,7 +252,7 @@ div.chronio-view
               draggable="true"
               :class="{'row-selected': selectedRowKeys['flat/' + appNode.app]}"
               @click="onAppsAppRowClick(appNode, $event)"
-              @dragstart="onDragStartApp(appNode, $event)"
+              @dragstart="onDragStartApp(appNode, $event, 'flat/' + appNode.app)"
               @dragend="onDragEnd"
             )
               span.act-expand(@click.stop="toggleExpandApp('flat/' + appNode.app)") {{ expandedApps['flat/' + appNode.app] ? '▾' : '▸' }}
@@ -265,7 +265,7 @@ div.chronio-view
                 draggable="true"
                 :class="{'row-selected': selectedRowKeys['flat/' + appNode.app + '/' + t.title]}"
                 @click="onActivityRowClick('flat/' + appNode.app + '/' + t.title, {type:'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title}, $event)"
-                @dragstart="onDragStartTitle(appNode.app, t, $event)"
+                @dragstart="onDragStartTitle(appNode.app, t, $event, 'flat/' + appNode.app + '/' + t.title)"
                 @dragend="onDragEnd"
               )
                 .act-indent2
@@ -287,7 +287,11 @@ div.chronio-view
               span.act-dur {{ formatDuration((group.endMs - group.startMs) / 1000) }}
 
             template(v-if="expandedTimelineBlocks[group.key]" v-for="e in group.subEvents" :key="e.timestamp + e.data.title")
-              .act-row.act-row--chrono-sub
+              .act-row.act-row--chrono-sub(
+                draggable="true"
+                @dragstart="onDragStartEvent(e, $event)"
+                @dragend="onDragEnd"
+              )
                 .act-indent
                 span.act-app-label {{ displayEventApp(e) }}:
                 span.act-title(:title="displayEventTitle(e)") {{ displayEventTitle(e) }}
@@ -531,16 +535,27 @@ export default {
       if (intervals.length === 0) {
         return events.filter((e: any) => !SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app));
       }
-      return events.filter((e: any) => {
-        if (SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app)) return false;
+      const segments: any[] = [];
+      for (const e of events) {
+        if (SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app)) continue;
         const eStart = moment(e.timestamp).valueOf();
         const eEnd = eStart + e.duration * 1000;
-        const totalNotAfk = intervals.reduce((sum: number, iv: any) => {
-          return sum + Math.max(0, Math.min(eEnd, iv.end) - Math.max(eStart, iv.start));
-        }, 0);
         const eventDur = eEnd - eStart;
-        return totalNotAfk > 0 && totalNotAfk / eventDur > 0.1;
-      });
+        if (eventDur <= 0) continue;
+
+        for (const iv of intervals) {
+          const start = Math.max(eStart, iv.start);
+          const end = Math.min(eEnd, iv.end);
+          const durationMs = end - start;
+          if (durationMs <= 1000) continue;
+          segments.push({
+            ...e,
+            timestamp: moment(start).toISOString(),
+            duration: durationMs / 1000,
+          });
+        }
+      }
+      return segments;
     },
 
     afkStatus(): 'active' | 'no-data' {
@@ -1222,20 +1237,21 @@ export default {
 
     addManualCategorizationRule(targetCat: any, rule: any, catStore: any) {
       const key = this.manualRuleKey(rule);
+      const targetKey = targetCat.name.join('>');
       for (const cat of catStore.classes) {
-        const rules = cat.data?.chronioManualRules || [];
-        if (!rules.length) continue;
-        const nextRules = rules.filter((existing: any) => this.manualRuleKey(existing) !== key);
-        if (nextRules.length !== rules.length) {
-          cat.data = { ...(cat.data || {}), chronioManualRules: nextRules };
+        const existingRules = cat.data?.chronioManualRules || [];
+        const nextRules = existingRules.filter((existing: any) => this.manualRuleKey(existing) !== key);
+        if (cat.name.join('>') === targetKey) {
+          nextRules.push(rule);
+        }
+        const changed = nextRules.length !== existingRules.length || cat.name.join('>') === targetKey;
+        if (changed) {
+          catStore.updateClass({
+            ...cat,
+            data: { ...(cat.data || {}), chronioManualRules: nextRules },
+          });
         }
       }
-
-      const existingRules = targetCat.data?.chronioManualRules || [];
-      targetCat.data = {
-        ...(targetCat.data || {}),
-        chronioManualRules: [...existingRules, rule],
-      };
     },
 
     classifyEventCategory(e: any): string[] {
@@ -1453,27 +1469,42 @@ export default {
     },
 
     // ─── DRAG-TO-CATEGORIZE (#3) ──────────────────────────────────
-    onDragStartApp(appNode: any, evt: DragEvent) {
+    onDragStartApp(appNode: any, evt: DragEvent, rowKey = '') {
       // #43: log to aid debugging
       this.isDraggingActivity = true;
       const selected = Object.values(this.selectedRowPayloads as Record<string, any>);
-      const items = selected.length > 0 ? selected : [{ type: 'app', app: appNode.app, title: '', rawTitle: '' }];
+      const items = rowKey && this.selectedRowKeys[rowKey] && selected.length > 0
+        ? selected
+        : [{ type: 'app', app: appNode.app, title: '', rawTitle: '' }];
       const payload = JSON.stringify(items);
       evt.dataTransfer!.setData('application/chronio', payload);
       evt.dataTransfer!.effectAllowed = 'copy';
       console.warn('[Chronio] dragstart app', appNode.app, 'items:', items.length);
     },
 
-    onDragStartTitle(app: string, t: any, evt: DragEvent) {
+    onDragStartTitle(app: string, t: any, evt: DragEvent, rowKey = '') {
       this.isDraggingActivity = true;
       // If items are selected and this row is among them, drag all selected
       const selected = Object.values(this.selectedRowPayloads as Record<string, any>);
-      const items = selected.length > 0
+      const items = rowKey && this.selectedRowKeys[rowKey] && selected.length > 0
         ? selected
         : [{ type: 'title', app, title: t.title, rawTitle: t.rawTitle || t.title }];
       evt.dataTransfer!.setData('application/chronio', JSON.stringify(items));
       evt.dataTransfer!.effectAllowed = 'copy';
       console.warn('[Chronio] dragstart title', t.title, 'items:', items.length);
+    },
+
+    onDragStartEvent(e: any, evt: DragEvent) {
+      this.isDraggingActivity = true;
+      const identity = this.eventIdentity(e);
+      const payload = [{
+        type: 'title',
+        app: identity.app,
+        title: identity.title,
+        rawTitle: identity.rawTitle || identity.title,
+      }];
+      evt.dataTransfer!.setData('application/chronio', JSON.stringify(payload));
+      evt.dataTransfer!.effectAllowed = 'copy';
     },
 
     onDragEnd() {
