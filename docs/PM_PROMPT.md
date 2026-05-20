@@ -89,7 +89,19 @@ A macOS desktop activity tracker. It reads data from ActivityWatch (AW) watchers
 
 ### Open Issues (V1)
 
-No open V1 GitHub issues as of 2026-05-20. New V1 bugs should be triaged separately before starting V2 implementation.
+The feedback thread opened a new V1 polish/bug pass after the first V1 closeout. These should be handled before starting V2 implementation.
+
+| # | Title | Priority |
+|---|-------|----------|
+| [#56](https://github.com/MaxSchollum/ActivityChronio/issues/56) | Replace Unknown subgroup labels with useful activity names | High |
+| [#57](https://github.com/MaxSchollum/ActivityChronio/issues/57) | Browser tab identity matching loses sites and context | High |
+| [#58](https://github.com/MaxSchollum/ActivityChronio/issues/58) | Uncategorized appears as a project in project view | High |
+| [#59](https://github.com/MaxSchollum/ActivityChronio/issues/59) | Nested activities cannot be reliably reassigned | High |
+| [#60](https://github.com/MaxSchollum/ActivityChronio/issues/60) | Clarify what activity row colors mean | Medium |
+| [#61](https://github.com/MaxSchollum/ActivityChronio/issues/61) | Chronological view ignores selected category | High |
+| [#62](https://github.com/MaxSchollum/ActivityChronio/issues/62) | Make entire activity row expand details | Medium |
+| [#44](https://github.com/MaxSchollum/ActivityChronio/issues/44) | Keyboard shortcuts for day navigation and date picker jump | Low |
+| [#21](https://github.com/MaxSchollum/ActivityChronio/issues/21) | Large phantom Google Chrome block spanning overnight hours | Needs triage |
 
 ---
 
