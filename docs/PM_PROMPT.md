@@ -43,7 +43,7 @@ A macOS desktop activity tracker. It reads data from ActivityWatch (AW) watchers
 
 ---
 
-## Current State (as of 2026-03-30)
+## Current State (as of 2026-05-20)
 
 ### Shipped (V1 complete features)
 | Feature | GitHub Issues |
@@ -79,18 +79,17 @@ A macOS desktop activity tracker. It reads data from ActivityWatch (AW) watchers
 | Tab title format: "Service: Page Title" extracted from browser titles | #33 |
 | `loginwindow` / `ScreenSaverEngine` filtered from events | #21 |
 | First-run onboarding (3-step overlay, dismisses to localStorage) | #23 |
+| Click category row to expand/collapse; click selected category to deselect | #28, #29 |
+| Inline rename overlay, subcategory create, category reparenting | #30, #31, #32 |
+| Multi-select rows with Cmd+click and Shift range-select | #34, #37, #55 |
+| Seamless refresh, no jarring blink | #35 |
+| Mini calendar showing days with/without data | #52 |
+| Legacy ActivityWatch routes/nav removed or redirected to Chronio | #53 |
+| AFK / idle detection suppresses inactive time | #54 |
 
-### Open Issues (V1 — implement next)
-| # | Title | Priority |
-|---|-------|----------|
-| [#28](https://github.com/MaxSchollum/ActivityChronio/issues/28) | Click entire category row to expand/collapse | High |
-| [#29](https://github.com/MaxSchollum/ActivityChronio/issues/29) | Click selected category again to deselect | High |
-| [#30](https://github.com/MaxSchollum/ActivityChronio/issues/30) | Inline rename overlays name in-place | Medium |
-| [#31](https://github.com/MaxSchollum/ActivityChronio/issues/31) | + button creates subcategory of selected folder | Medium |
-| [#32](https://github.com/MaxSchollum/ActivityChronio/issues/32) | Drag category into another to reparent | Medium |
-| [#33](https://github.com/MaxSchollum/ActivityChronio/issues/33) | Sub-item indentation + "App: Title" format | Medium |
-| [#34](https://github.com/MaxSchollum/ActivityChronio/issues/34) | Multi-select rows with Cmd+click for batch categorization | Low |
-| [#35](https://github.com/MaxSchollum/ActivityChronio/issues/35) | Auto-refresh causes jarring blink — make seamless | High |
+### Open Issues (V1)
+
+No open V1 GitHub issues as of 2026-05-20. New V1 bugs should be triaged separately before starting V2 implementation.
 
 ---
 

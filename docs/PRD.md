@@ -57,22 +57,22 @@ Chronio is a personal macOS activity tracker forked from ActivityWatch. Core goa
 | Tab title format | "Service: Page Title" extracted from browser window titles |
 | loginwindow filtered | + ScreenSaverEngine |
 | First-run onboarding | 3-step overlay, dismissed to localStorage |
+| Sidebar mini calendar | Days with/without data visible in sidebar |
+| AFK / idle handling | Inactive time suppressed from active timeline |
+| Legacy AW routes removed | Non-Chronio routes redirect to `/chronio` |
+| Multi-select polish | Cmd+click toggles selected rows on/off |
 
-## What's NOT Built (open V1 issues)
+## What's NOT Built
 
-| Gap | GitHub Issue |
-|-----|-------------|
-| Click entire category row to expand/collapse | [#28](https://github.com/MaxSchollum/ActivityChronio/issues/28) |
-| Click selected category to deselect | [#29](https://github.com/MaxSchollum/ActivityChronio/issues/29) |
-| Inline rename overlays name in-place | [#30](https://github.com/MaxSchollum/ActivityChronio/issues/30) |
-| + button creates subcategory of selected folder | [#31](https://github.com/MaxSchollum/ActivityChronio/issues/31) |
-| Drag category into another to reparent | [#32](https://github.com/MaxSchollum/ActivityChronio/issues/32) |
-| Sub-item indentation improvements | [#33](https://github.com/MaxSchollum/ActivityChronio/issues/33) |
-| Multi-select rows with Cmd+click | [#34](https://github.com/MaxSchollum/ActivityChronio/issues/34) |
-| Auto-refresh without jarring blink | [#35](https://github.com/MaxSchollum/ActivityChronio/issues/35) |
-| No screenshot capture | V2 |
-| No week/month views | V2 |
-| No macOS app packaging | V2 |
+There are no open V1 GitHub issues as of 2026-05-20. Remaining product scope below belongs to V2.
+
+| Gap | Target |
+|-----|--------|
+| Screenshot capture and filmstrip viewer | V2 |
+| Week/month views and multi-day review | V2 |
+| macOS app packaging and distribution | V2 |
+| In-app settings page | V2 |
+| Advanced search and exports/reports | V2 |
 
 ---
 
