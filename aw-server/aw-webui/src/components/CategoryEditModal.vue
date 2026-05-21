@@ -45,6 +45,12 @@ b-modal(id="edit" ref="edit" title="Edit category" @show="resetModal" @hidden="h
 
   hr
   div.my-1
+    b Daily goal
+    b-input-group.my-1(prepend="Minutes")
+      b-form-input(v-model.number="editing.dailyTargetMinutes" type="number" min="1" placeholder="None")
+
+  hr
+  div.my-1
     b-btn(variant="danger", @click="removeClass(categoryId); $refs.edit.hide()")
       icon(name="trash")
       | Remove category
@@ -80,6 +86,7 @@ export default {
         color: null,
         inherit_score: true,
         score: null,
+        dailyTargetMinutes: null,
       },
     };
   },
@@ -145,15 +152,24 @@ export default {
         return;
       }
 
+      const existing = this.categoryStore.get_category_by_id(this.editing.id);
+      const data = {
+        ...(existing.data || {}),
+        color: this.editing.inherit_color === true ? undefined : this.editing.color,
+        score: this.editing.inherit_score === true ? undefined : this.editing.score,
+      };
+      if (this.editing.dailyTargetMinutes > 0) {
+        data.dailyTargetMinutes = Math.round(this.editing.dailyTargetMinutes);
+      } else {
+        delete data.dailyTargetMinutes;
+      }
+
       // Save the category
       const new_class = {
         id: this.editing.id,
         name: this.editing.parent.concat(this.editing.name),
         rule: this.editing.rule.type !== 'none' ? this.editing.rule : { type: 'none' },
-        data: {
-          color: this.editing.inherit_color === true ? undefined : this.editing.color,
-          score: this.editing.inherit_score === true ? undefined : this.editing.score,
-        },
+        data,
       };
       this.categoryStore.updateClass(new_class);
 
@@ -168,6 +184,7 @@ export default {
       const inherit_color = !color;
       const score = cat.data ? cat.data.score : undefined;
       const inherit_score = !score;
+      const dailyTargetMinutes = cat.data ? cat.data.dailyTargetMinutes : undefined;
       this.editing = {
         id: cat.id,
         name: cat.subname,
@@ -177,6 +194,7 @@ export default {
         inherit_color,
         score,
         inherit_score,
+        dailyTargetMinutes: dailyTargetMinutes || null,
       };
     },
   },

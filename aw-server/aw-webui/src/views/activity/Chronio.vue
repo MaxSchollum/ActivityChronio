@@ -30,6 +30,9 @@ div.chronio-view
       .chronio-metric(v-if="productivityScore !== '—'")
         span.label Productivity:
         span.value.prod-score(:class="productivityScoreClass") {{ productivityScore }}%
+      .chronio-metric.goal-metric(v-if="goalSummary.total > 0")
+        span.label Goals:
+        span.value {{ goalSummary.hit }}/{{ goalSummary.total }}
       .chronio-afk-badge(:class="afkStatus" :title="afkStatus === 'active' ? 'AFK idle detection active' : 'No AFK data — idle time not filtered'")
         | {{ afkStatus === 'active' ? 'AFK ✓' : 'AFK ⚠' }}
       .chronio-search
@@ -103,35 +106,42 @@ div.chronio-view
             @dragleave="dragOverCatKey = null"
             @drop.prevent="onSidebarDrop(row, $event)"
           )
-            span.sr-expand-btn(v-if="row.hasChildren" @click.stop="toggleSidebarExpand(row)") {{ sidebarExpanded[row.key] ? '▾' : '▸' }}
-            span.sr-expand-spacer(v-else)
-            .sr-dot(
-              :style="{background: row.color}"
-              @click.stop="openColorPicker(row, $event)"
-            )
-            input.sr-rename-input(
-              v-if="renamingKey === row.key"
-              ref="renameInput"
-              :value="renameValue"
-              @input="renameValue = $event.target.value"
-              @keydown.enter.prevent="commitRename(row)"
-              @keydown.escape.prevent="cancelRename"
-              @blur="cancelRename"
-              @click.stop
-            )
-            span.sr-name(v-else) {{ row.label }}
-            span.sr-score-dot(
-              v-if="row.score !== 0"
-              :class="row.score > 0 ? 'score-productive' : 'score-distracting'"
-              :title="row.score > 0 ? 'Productive' : 'Distracting'"
-            )
-            span.sr-time {{ row.time }}
-            span.sr-drag-handle(
-              draggable="true"
-              @dragstart.stop="onHandleDragStart(row, $event)"
-              @click.stop
-              title="Drag to reorder"
-            ) ⠿
+            .sr-main
+              span.sr-expand-btn(v-if="row.hasChildren" @click.stop="toggleSidebarExpand(row)") {{ sidebarExpanded[row.key] ? '▾' : '▸' }}
+              span.sr-expand-spacer(v-else)
+              .sr-dot(
+                :style="{background: row.color}"
+                @click.stop="openColorPicker(row, $event)"
+              )
+              input.sr-rename-input(
+                v-if="renamingKey === row.key"
+                ref="renameInput"
+                :value="renameValue"
+                @input="renameValue = $event.target.value"
+                @keydown.enter.prevent="commitRename(row)"
+                @keydown.escape.prevent="cancelRename"
+                @blur="cancelRename"
+                @click.stop
+              )
+              span.sr-name(v-else) {{ row.label }}
+              span.sr-score-dot(
+                v-if="row.score !== 0"
+                :class="row.score > 0 ? 'score-productive' : 'score-distracting'"
+                :title="row.score > 0 ? 'Productive' : 'Distracting'"
+              )
+              span.sr-time {{ row.time }}
+              span.sr-drag-handle(
+                draggable="true"
+                @dragstart.stop="onHandleDragStart(row, $event)"
+                @click.stop
+                title="Drag to reorder"
+              ) ⠿
+            .sr-goal(v-if="row.goal")
+              .sr-goal-label
+                span {{ row.goal.label }}
+                span(:class="{hit: row.goal.hit}") {{ row.goal.hit ? 'Hit' : 'In progress' }}
+              .sr-goal-track
+                .sr-goal-fill(:class="{hit: row.goal.hit}" :style="{width: row.goal.percent + '%'}")
 
         //- Mini calendar (#52)
         .sidebar-calendar
@@ -173,6 +183,18 @@ div.chronio-view
               :class="{active: ctxMenu.row.score < 0}"
               @click="setCategoryScore(ctxMenu.row, -10)"
             ) Distracting
+          .ctx-goal-row
+            span Daily goal:
+            .ctx-goal-input
+              input(
+                type="number"
+                min="1"
+                step="5"
+                placeholder="None"
+                :value="goalTargetValue(ctxMenu.row)"
+                @change="setCategoryGoal(ctxMenu.row, $event)"
+              )
+              em min
           .ctx-divider
           .ctx-item.ctx-danger(@click="deleteCategory(ctxMenu.row)") Delete
 
@@ -749,6 +771,21 @@ export default {
       return 'prod-red';
     },
 
+    goalSummary(): { hit: number; total: number } {
+      if (this.selectedPeriod !== 'day') return { hit: 0, total: 0 };
+      const durations: Record<string, number> = this.categoryDurations;
+      const goals = ((this.categoryStore as any).classes as any[])
+        .map((category: any) => ({
+          key: category.name.join('>'),
+          targetSeconds: Number(category.data?.dailyTargetMinutes || 0) * 60,
+        }))
+        .filter((goal: any) => goal.targetSeconds > 0);
+      return {
+        hit: goals.filter((goal: any) => (durations[goal.key] || 0) >= goal.targetSeconds).length,
+        total: goals.length,
+      };
+    },
+
     // ─── ACTIVITIES TREE ─────────────────────────────────────────────
     // Builds category → app → title hierarchy from AFK-filtered events
     activitiesTree(): any[] {
@@ -889,6 +926,15 @@ export default {
           const key: string = cat.name.join('>');
           const dur = durations[key] || 0;
           const score = catStore.get_category_score(cat.name);
+          const targetMinutes = Number(cat.data?.dailyTargetMinutes || 0);
+          const goal =
+            this.selectedPeriod === 'day' && targetMinutes > 0
+              ? {
+                  hit: dur >= targetMinutes * 60,
+                  label: `${formatDuration(dur)} / ${formatDuration(targetMinutes * 60)}`,
+                  percent: Math.min(100, Math.round((dur / (targetMinutes * 60)) * 100)),
+                }
+              : null;
           rows.push({
             key,
             id: cat.id,
@@ -899,6 +945,8 @@ export default {
             hasChildren: cat.children && cat.children.length > 0,
             time: dur > 0 ? formatDuration(dur) : '',
             score,
+            goal,
+            dailyTargetMinutes: targetMinutes > 0 ? targetMinutes : null,
           });
           if (expanded[key] && cat.children && cat.children.length > 0) {
             flatten(cat.children, depth + 1);
@@ -934,6 +982,8 @@ export default {
           hasChildren: false,
           time: '',
           score: 0,
+          goal: null,
+          dailyTargetMinutes: null,
           fullName: [],
         });
       }
@@ -1908,6 +1958,26 @@ export default {
       catStore.save();
     },
 
+    goalTargetValue(row: any): string {
+      return row.dailyTargetMinutes ? String(row.dailyTargetMinutes) : '';
+    },
+
+    setCategoryGoal(row: any, event: Event) {
+      const target = event.target as HTMLInputElement;
+      const minutes = Number(target.value);
+      const catStore = this.categoryStore as any;
+      const cat = catStore.classes.find((c: any) => c.name.join('>') === row.key);
+      if (!cat) return;
+      const data = { ...(cat.data || {}) };
+      if (Number.isFinite(minutes) && minutes > 0) {
+        data.dailyTargetMinutes = Math.round(minutes);
+      } else {
+        delete data.dailyTargetMinutes;
+      }
+      catStore.updateClass({ ...cat, data });
+      catStore.save();
+    },
+
     // ─── DRAG-TO-CATEGORIZE (#3) ──────────────────────────────────
     onDragStartApp(appNode: any, evt: DragEvent, rowKey = '') {
       // #43: log to aid debugging
@@ -2861,8 +2931,9 @@ export default {
 
 .sidebar-cat-row {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 4px;
   padding: 5px 6px 5px 10px;
   cursor: pointer;
   font-size: 13px;
@@ -2870,8 +2941,43 @@ export default {
   margin: 1px 6px;
   &:hover { background: rgba(255,255,255,0.05); }
   &.active { background: rgba(75,139,255,0.12); color: #7db0ff; }
+  .sr-main {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+  }
   .sr-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sr-time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+}
+
+.sr-goal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 26px;
+}
+
+.sr-goal-label {
+  color: var(--muted);
+  display: flex;
+  font-size: 10px;
+  justify-content: space-between;
+  line-height: 1.1;
+  span.hit { color: #1db954; }
+}
+
+.sr-goal-track {
+  background: rgba(255,255,255,0.08);
+  border-radius: 999px;
+  height: 3px;
+  overflow: hidden;
+}
+
+.sr-goal-fill {
+  background: #4b8bff;
+  height: 100%;
+  min-width: 2px;
+  &.hit { background: #1db954; }
 }
 
 .sr-expand-btn {
@@ -3014,6 +3120,37 @@ export default {
   padding: 6px 10px;
   font-size: 12px;
   color: var(--muted);
+}
+
+.ctx-goal-row {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  justify-content: space-between;
+  padding: 6px 10px;
+}
+
+.ctx-goal-input {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+  input {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font: inherit;
+    min-height: 24px;
+    outline: none;
+    padding: 2px 6px;
+    width: 66px;
+  }
+  em {
+    color: var(--muted);
+    font-style: normal;
+  }
 }
 
 .ctx-score-btn {
