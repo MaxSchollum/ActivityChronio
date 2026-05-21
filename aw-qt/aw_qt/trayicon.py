@@ -25,6 +25,8 @@ from PyQt6.QtWidgets import (
 )
 
 from .manager import Manager, Module
+from . import login_item as _login_item
+from . import updater as _updater
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +150,8 @@ class TrayIcon(QSystemTrayIcon):
         self._open_logs_action = None
         self._open_settings_action = None
         self._quit_action = None
+        self._login_item_action = None
+        self._update_action = None
         self._icon_tracking = self._make_status_icon(icon, True)
         self._icon_idle = self._make_status_icon(icon, False)
 
@@ -158,6 +162,9 @@ class TrayIcon(QSystemTrayIcon):
         self._tracking_timer.timeout.connect(self._update_tracking_status)
         self._tracking_timer.start()
         self._update_tracking_status()
+
+        # Kick off a background update check once the UI is up
+        self._start_update_check()
 
     def on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in (
@@ -190,6 +197,19 @@ class TrayIcon(QSystemTrayIcon):
         self._last_update_action.triggered.connect(lambda: None)
 
         menu.addSeparator()
+
+        # ── "Start at Login" toggle (macOS only) ──────────────────────────
+        if sys.platform == "darwin":
+            is_login = _login_item.is_login_item()
+            self._login_item_action = menu.addAction(
+                "✓ Start at Login" if is_login else "Start at Login"
+            )
+            self._login_item_action.triggered.connect(self._toggle_login_item)
+
+        # ── "Check for Updates" / "Update available" ──────────────────────
+        self._update_action = menu.addAction("Check for Updates…")
+        self._update_action.triggered.connect(self._check_for_updates_now)
+
         menu.addSeparator()
 
         exitIcon = QIcon.fromTheme(
@@ -394,6 +414,56 @@ class TrayIcon(QSystemTrayIcon):
         state = self._get_tracking_state()
         self._apply_tracking_state(state)
 
+    # ── Login item ─────────────────────────────────────────────────────────
+
+    def _toggle_login_item(self) -> None:
+        if _login_item.is_login_item():
+            _login_item.disable_login_item()
+            if self._login_item_action is not None:
+                self._login_item_action.setText("Start at Login")
+        else:
+            _login_item.enable_login_item()
+            if self._login_item_action is not None:
+                self._login_item_action.setText("✓ Start at Login")
+
+    # ── Update checker ─────────────────────────────────────────────────────
+
+    def _start_update_check(self) -> None:
+        """Fire a background update check and wire the callback to the UI thread."""
+        try:
+            current = aw_core.__version__
+        except AttributeError:
+            current = "0.0.0"
+
+        def _on_result(latest_tag: Optional[str]) -> None:
+            # Callback arrives from a worker thread — marshal to Qt main thread
+            QtCore.QMetaObject.invokeMethod(
+                self._parent,
+                "_chronio_update_result",
+                QtCore.Qt.ConnectionType.QueuedConnection,
+                QtCore.Q_ARG(str, latest_tag or ""),
+            )
+
+        # Sparkle handles its own polling; only use the Python checker as a
+        # lightweight fallback for the menu badge.
+        _updater.check_for_update(current, _on_result)
+
+    def _on_update_result(self, latest_tag: str) -> None:
+        """Called on the main thread when the update check completes."""
+        if latest_tag and self._update_action is not None:
+            self._update_action.setText(f"Update available: {latest_tag} ↗")
+            self._update_action.triggered.disconnect()
+            self._update_action.triggered.connect(
+                lambda: open_url(_updater.RELEASES_URL)
+            )
+
+    def _check_for_updates_now(self) -> None:
+        """Triggered by 'Check for Updates…' menu item — use Sparkle if available."""
+        from . import sparkle as _sparkle  # local import to keep startup fast
+
+        if not _sparkle.check_for_updates_now():
+            # Sparkle not active; fall back to opening the releases page
+            open_url(_updater.RELEASES_URL)
 
     def _build_modulemenu(self, moduleMenu: QMenu) -> None:
         moduleMenu.clear()
@@ -484,6 +554,11 @@ def run(manager: Manager, testing: bool = False) -> Any:
     trayIcon.show()
 
     QApplication.setQuitOnLastWindowClosed(False)
+
+    # Initialise Sparkle auto-updater (macOS only; no-op elsewhere or if framework absent)
+    if sys.platform == "darwin" and not testing:
+        from . import sparkle as _sparkle
+        _sparkle.init_sparkle()
 
     logger.info("Initialized aw-qt and trayicon successfully")
     # Run the application, blocks until quit

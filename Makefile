@@ -168,7 +168,19 @@ aw-qt/media/logo/logo.icns:
 	rm -R build/MyIcon.iconset
 	mv build/MyIcon.icns aw-qt/media/logo/logo.icns
 
-dist/Chronio.app: aw-qt/media/logo/logo.icns
+# Generate the custom Chronio app icon (macOS only, requires AppKit via PyObjC)
+aw-qt/media/logo/chronio.icns:
+	python3 scripts/package/create_icon.py
+
+# Generate the DMG background image (macOS only)
+scripts/package/dmg-background.png:
+	python3 scripts/package/create_dmg_background.py
+
+# Download Sparkle.framework for auto-updates
+Frameworks/Sparkle.framework:
+	./scripts/package/setup_sparkle.sh
+
+dist/Chronio.app: aw-qt/media/logo/chronio.icns scripts/package/dmg-background.png
 	pyinstaller --clean --noconfirm aw.spec
 
 dist/Chronio.dmg: dist/Chronio.app
