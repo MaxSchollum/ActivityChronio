@@ -2,12 +2,18 @@ import Vue from 'vue';
 import VueRouter from 'vue-router';
 
 const Chronio = () => import('./views/activity/Chronio.vue');
+const ChronioSettings = () => import('./views/activity/ChronioSettings.vue');
 
 Vue.use(VueRouter);
 
 const router = new VueRouter({
   routes: [
     { path: '/chronio', component: Chronio, meta: { fullContainer: true, noShell: true } },
+    {
+      path: '/chronio/settings',
+      component: ChronioSettings,
+      meta: { fullContainer: true, noShell: true },
+    },
     // Redirect all legacy ActivityWatch routes to Chronio
     { path: '/', redirect: '/chronio' },
     { path: '/home', redirect: '/chronio' },
@@ -21,8 +27,8 @@ const router = new VueRouter({
     { path: '/query', redirect: '/chronio' },
     { path: '/alerts', redirect: '/chronio' },
     { path: '/timespiral', redirect: '/chronio' },
-    { path: '/settings', redirect: '/chronio' },
-    { path: '/settings/category-builder', redirect: '/chronio' },
+    { path: '/settings', redirect: '/chronio/settings' },
+    { path: '/settings/category-builder', redirect: '/chronio/settings' },
     { path: '/stopwatch', redirect: '/chronio' },
     { path: '/search', redirect: '/chronio' },
     { path: '/graph', redirect: '/chronio' },

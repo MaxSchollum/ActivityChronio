@@ -30,6 +30,7 @@ div.chronio-view
         | {{ afkStatus === 'active' ? 'AFK ✓' : 'AFK ⚠' }}
       .chronio-search
         input(type="text" placeholder="Search…" v-model="searchQuery")
+      button.chronio-nav-btn(@click="$router.push('/chronio/settings')" title="Settings") Settings
 
   div.chronio-loading(v-if="loading")
     span Loading activity data&hellip;
@@ -42,6 +43,7 @@ div.chronio-view
         .sidebar-nav-item.active Activities
         .sidebar-nav-item Stats
         .sidebar-nav-item Reports
+        .sidebar-nav-item(@click="$router.push('/chronio/settings')") Settings
 
       .sidebar-tree
         .sidebar-summary-row(
@@ -555,7 +557,7 @@ export default {
 
     // Full-day AFK-filtered window events (no segment restriction)
     activeWindowEvents(): any[] {
-      const events = this.windowEvents || [];
+      const events = (this.windowEvents || []).filter((e: any) => !this.shouldHideFromChronio(e));
       const intervals = this.notAfkIntervals;
       // Fail-open: if no AFK data available, show all window events unfiltered
       if (intervals.length === 0) {
@@ -1275,6 +1277,34 @@ export default {
 
     displayEventTitle(e: any): string {
       return this.eventIdentity(e).title;
+    },
+
+    listHasApp(app: string, apps: string[]): boolean {
+      const normalizedApp = (app || '').trim().toLowerCase();
+      return apps.some((entry: string) => entry.trim().toLowerCase() === normalizedApp);
+    },
+
+    titlePatternMatches(value: string, pattern: string): boolean {
+      const trimmed = pattern.trim();
+      if (!trimmed) return false;
+      try {
+        return new RegExp(trimmed, 'i').test(value);
+      } catch (e) {
+        return value.toLowerCase().includes(trimmed.toLowerCase());
+      }
+    },
+
+    shouldHideFromChronio(e: any): boolean {
+      const hiddenApps = [
+        ...(this.settingsStore.chronioIgnoredApps || []),
+        ...(this.settingsStore.chronioExcludedApps || []),
+      ];
+      if (this.listHasApp(e.data?.app || '', hiddenApps)) return true;
+
+      const titleValue = [e.data?.title || '', e.data?.url || ''].filter(Boolean).join('\n');
+      return (this.settingsStore.chronioExcludedTitlePatterns || []).some((pattern: string) =>
+        this.titlePatternMatches(titleValue, pattern)
+      );
     },
 
     matchRegexCategory(str: string, regexes: [any, RegExp][]): string[] {
