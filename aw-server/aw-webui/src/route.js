@@ -7,7 +7,11 @@ Vue.use(VueRouter);
 
 const router = new VueRouter({
   routes: [
-    { path: '/chronio', component: Chronio, meta: { fullContainer: true, noShell: true } },
+    {
+      path: '/chronio/:period(day|week|month)?/:date?',
+      component: Chronio,
+      meta: { fullContainer: true, noShell: true },
+    },
     // Redirect all legacy ActivityWatch routes to Chronio
     { path: '/', redirect: '/chronio' },
     { path: '/home', redirect: '/chronio' },
