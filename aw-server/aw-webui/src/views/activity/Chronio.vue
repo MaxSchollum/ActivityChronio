@@ -48,8 +48,8 @@ div.chronio-view
     .chronio-sidebar
       nav.sidebar-nav
         .sidebar-nav-item.active Activities
-        .sidebar-nav-item(@click="$router.push('/chronio/stats')") Stats
-        .sidebar-nav-item Reports
+        .sidebar-nav-item.disabled(title="Coming in V2") Stats
+        .sidebar-nav-item.disabled(title="Coming in V2") Reports
         .sidebar-nav-item(@click="$router.push('/chronio/settings')") Settings
 
       .sidebar-tree
@@ -95,6 +95,7 @@ div.chronio-view
           .sidebar-cat-row(
             v-else
             draggable="true"
+            :title="row.label"
             :style="{paddingLeft: (row.depth * 14 + 10) + 'px'}"
             :class="{active: selectedCatFilter === row.key, 'drop-target': dragOverCatKey === row.key}"
             @click="onSidebarRowClick(row)"
@@ -2873,6 +2874,7 @@ export default {
   border-radius: 0;
   &:hover { color: var(--text); background: rgba(255,255,255,0.04); }
   &.active { color: #4b8bff; background: rgba(75,139,255,0.08); font-weight: 500; }
+  &.disabled { opacity: 0.35; cursor: not-allowed; }
 }
 
 .sidebar-tree {
