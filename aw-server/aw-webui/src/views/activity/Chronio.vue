@@ -29,7 +29,7 @@ div.chronio-view
       .chronio-afk-badge(:class="afkStatus" :title="afkStatus === 'active' ? 'AFK idle detection active' : 'No AFK data — idle time not filtered'")
         | {{ afkStatus === 'active' ? 'AFK ✓' : 'AFK ⚠' }}
       .chronio-search
-        input(type="text" placeholder="Search…" v-model="searchQuery")
+        input(ref="searchInput" type="text" placeholder="Search…" v-model="searchQuery")
       button.chronio-nav-btn(@click="$router.push('/chronio/settings')" title="Settings") Settings
 
   div.chronio-loading(v-if="loading")
@@ -197,9 +197,9 @@ div.chronio-view
           | {{ centerTitle }}:&nbsp;
           strong {{ centerTrackedTime }}
         .view-toggle
-          button(:class="{active: viewMode === 'unified'}" @click="viewMode = 'unified'") Unified
-          button(:class="{active: viewMode === 'apps'}" @click="viewMode = 'apps'") Apps
-          button(:class="{active: viewMode === 'chrono'}" @click="viewMode = 'chrono'") Chrono
+          button(:class="{active: viewMode === 'unified'}" @click="setViewMode('unified')") Unified
+          button(:class="{active: viewMode === 'apps'}" @click="setViewMode('apps')") Apps
+          button(:class="{active: viewMode === 'chrono'}" @click="setViewMode('chrono')") Chrono
 
       //- Empty state (#45)
       .act-day-empty(v-if="!loading && !activeWindowEvents.length")
@@ -215,7 +215,8 @@ div.chronio-view
           template(v-else v-for="catNode in filteredActivitiesTree" :key="catNode.catKey")
             .act-row.act-row--cat(
               @click="toggleExpandCat(catNode.catKey)"
-              :class="{expanded: expandedCats[catNode.catKey]}"
+              :data-row-key="catActivityRowKey(catNode.catKey)"
+              :class="{expanded: expandedCats[catNode.catKey], 'row-selected': selectedRowKeys[catActivityRowKey(catNode.catKey)]}"
             )
               span.act-expand {{ expandedCats[catNode.catKey] ? '▾' : '▸' }}
               .act-dot(:style="{background: catNode.color}")
@@ -225,6 +226,7 @@ div.chronio-view
             template(v-if="expandedCats[catNode.catKey]" v-for="appNode in catNode.apps" :key="catNode.catKey + '/' + appNode.app")
               .act-row.act-row--app(
                 draggable="true"
+                :data-row-key="appRowKey(catNode.catKey, appNode.app)"
                 :class="{'row-selected': selectedRowKeys[appRowKey(catNode.catKey, appNode.app)]}"
                 @click="onUnifiedAppRowClick(catNode.catKey, appNode, $event)"
                 @dragstart="onDragStartApp(appNode, $event, appRowKey(catNode.catKey, appNode.app))"
@@ -241,6 +243,7 @@ div.chronio-view
               template(v-if="expandedApps[catNode.catKey + '/' + appNode.app]" v-for="t in appNode.titles" :key="catNode.catKey + '/' + appNode.app + '/' + t.title")
                 .act-row.act-row--title(
                   draggable="true"
+                  :data-row-key="titleRowKey(catNode.catKey, appNode.app, t.title)"
                   :class="{'row-selected': selectedRowKeys[titleRowKey(catNode.catKey, appNode.app, t.title)]}"
                   @click="onActivityRowClick(titleRowKey(catNode.catKey, appNode.app, t.title), {type:'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title}, $event)"
                   @dragstart="onDragStartTitle(appNode.app, t, $event, titleRowKey(catNode.catKey, appNode.app, t.title))"
@@ -256,6 +259,7 @@ div.chronio-view
           template(v-else v-for="appNode in flatAppsList" :key="'flat/' + appNode.app")
             .act-row.act-row--app(
               draggable="true"
+              :data-row-key="'flat/' + appNode.app"
               :class="{'row-selected': selectedRowKeys['flat/' + appNode.app]}"
               @click="onAppsAppRowClick(appNode, $event)"
               @dragstart="onDragStartApp(appNode, $event, 'flat/' + appNode.app)"
@@ -269,6 +273,7 @@ div.chronio-view
             template(v-if="expandedApps['flat/' + appNode.app]" v-for="t in appNode.titles" :key="'flat/' + appNode.app + '/' + t.title")
               .act-row.act-row--title(
                 draggable="true"
+                :data-row-key="'flat/' + appNode.app + '/' + t.title"
                 :class="{'row-selected': selectedRowKeys['flat/' + appNode.app + '/' + t.title]}"
                 @click="onActivityRowClick('flat/' + appNode.app + '/' + t.title, {type:'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title}, $event)"
                 @dragstart="onDragStartTitle(appNode.app, t, $event, 'flat/' + appNode.app + '/' + t.title)"
@@ -284,6 +289,8 @@ div.chronio-view
           template(v-else v-for="group in chronoGrouped" :key="group.key")
             .act-row.act-row--chrono-group(
               :data-startms="group.startMs"
+              :data-row-key="chronoGroupRowKey(group.key)"
+              :class="{'row-selected': selectedRowKeys[chronoGroupRowKey(group.key)]}"
               @click="toggleChronoBlock(group.key)"
             )
               span.act-caret {{ expandedTimelineBlocks[group.key] ? '▾' : '▸' }}
@@ -295,6 +302,9 @@ div.chronio-view
             template(v-if="expandedTimelineBlocks[group.key]" v-for="e in group.subEvents" :key="e.timestamp + e.data.title")
               .act-row.act-row--chrono-sub(
                 draggable="true"
+                :data-row-key="chronoEventRowKey(group.key, e)"
+                :class="{'row-selected': selectedRowKeys[chronoEventRowKey(group.key, e)]}"
+                @click="onChronoEventRowClick(group.key, e, $event)"
                 @dragstart="onDragStartEvent(e, $event)"
                 @dragend="onDragEnd"
               )
@@ -303,6 +313,9 @@ div.chronio-view
                 span.act-title(:title="displayEventTitle(e)") {{ displayEventTitle(e) }}
                 span.act-time {{ formatHHMM(e.timestamp) }}
                 span.act-dur {{ formatDuration(e.duration) }}
+
+      .chronio-center-footer
+        button.chronio-shortcuts-hint(type="button" title="Show keyboard shortcuts (?)" @click="openShortcutReference") ⌨ Shortcuts
 
     //- ─── RIGHT: TIMELINE ────────────────────────────────────────────
     .chronio-timeline-panel
@@ -366,6 +379,16 @@ div.chronio-view
         button.ob-btn-ghost(v-if="onboardingStep > 0" @click="onboardingStep--") Back
         button.ob-btn-primary(v-if="onboardingStep < 2" @click="onboardingStep++") Next
         button.ob-btn-primary(v-else @click="dismissOnboarding") Get started
+
+  .shortcut-overlay(v-if="showShortcutReference" @click.self="closeShortcutReference")
+    .shortcut-modal(role="dialog" aria-modal="true" aria-labelledby="shortcut-title")
+      .shortcut-header
+        h2#shortcut-title Keyboard shortcuts
+        button.shortcut-close(type="button" aria-label="Close keyboard shortcuts" @click="closeShortcutReference") ×
+      .shortcut-list
+        .shortcut-row(v-for="shortcut in shortcutReferenceRows" :key="shortcut.keys")
+          kbd {{ shortcut.keys }}
+          span {{ shortcut.action }}
 </template>
 
 <script lang="ts">
@@ -436,6 +459,20 @@ const KNOWN_BROWSER_SITES: { label: string; patterns: RegExp[] }[] = [
   { label: 'Codex', patterns: [/\bcodex\b/i] },
 ];
 
+const SHORTCUT_REFERENCE_ROWS = [
+  { keys: '← / →', action: 'Previous / next day' },
+  { keys: 'T', action: 'Jump to today' },
+  { keys: 'U', action: 'Unified view' },
+  { keys: 'A', action: 'Apps view' },
+  { keys: 'C', action: 'Chronological view' },
+  { keys: '↑ / ↓', action: 'Move through activity rows' },
+  { keys: 'Space', action: 'Expand or collapse selected row' },
+  { keys: '1–9', action: 'Assign selection to sidebar category' },
+  { keys: '/', action: 'Focus search' },
+  { keys: 'Escape', action: 'Clear filters and selection' },
+  { keys: '?', action: 'Show this reference' },
+];
+
 function formatDuration(seconds: number): string {
   if (!seconds || seconds < 1) return '0s';
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -491,6 +528,8 @@ export default {
       selectedRowKeys: {} as Record<string, boolean>,
       selectedRowPayloads: {} as Record<string, any>,
       lastClickedKey: null as string | null,
+      showShortcutReference: false as boolean,
+      shortcutReferenceRows: SHORTCUT_REFERENCE_ROWS,
       // drag-category state (#32)
       draggingSidebarKey: null as string | null,
       // sidebar reorder state (#46)
@@ -869,6 +908,13 @@ export default {
       return rows;
     },
 
+    shortcutCategories(): any[] {
+      const catStore = this.categoryStore as any;
+      return catStore.classes_hierarchy
+        .filter((cat: any) => cat.name.length === 1 && cat.name[0] !== 'Uncategorized')
+        .slice(0, 9);
+    },
+
     // #40: Flat app list sorted by total time
     flatAppsList(): any[] {
       const appMap: Record<string, any> = {};
@@ -913,15 +959,23 @@ export default {
         });
     },
 
-    // #37: ordered list of visible row keys for shift-range select
-    visibleActivityRowKeys(): { key: string; payload: any }[] {
-      const result: { key: string; payload: any }[] = [];
+    // #37/#51: ordered list of visible row keys for selection and keyboard navigation
+    visibleActivityRowKeys(): any[] {
+      const result: any[] = [];
       if (this.viewMode === 'unified') {
         for (const catNode of this.filteredActivitiesTree as any[]) {
+          result.push({
+            key: this.catActivityRowKey(catNode.catKey),
+            expansion: { type: 'cat', key: catNode.catKey },
+          });
           if (!this.expandedCats[catNode.catKey]) continue;
           for (const appNode of catNode.apps) {
             const aKey = this.appRowKey(catNode.catKey, appNode.app);
-            result.push({ key: aKey, payload: { type: 'app', app: appNode.app, title: '' } });
+            result.push({
+              key: aKey,
+              payload: { type: 'app', app: appNode.app, title: '' },
+              expansion: { type: 'app', key: catNode.catKey + '/' + appNode.app },
+            });
             if (this.expandedApps[catNode.catKey + '/' + appNode.app]) {
               for (const t of appNode.titles) {
                 result.push({
@@ -934,7 +988,11 @@ export default {
         }
       } else if (this.viewMode === 'apps') {
         for (const appNode of this.flatAppsList as any[]) {
-          result.push({ key: 'flat/' + appNode.app, payload: { type: 'app', app: appNode.app, title: '' } });
+          result.push({
+            key: 'flat/' + appNode.app,
+            payload: { type: 'app', app: appNode.app, title: '' },
+            expansion: { type: 'app', key: 'flat/' + appNode.app },
+          });
           if (this.expandedApps['flat/' + appNode.app]) {
             for (const t of appNode.titles) {
               result.push({
@@ -942,6 +1000,28 @@ export default {
                 payload: { type: 'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title },
               });
             }
+          }
+        }
+      } else {
+        for (const group of this.chronoGrouped as any[]) {
+          const groupIdentity = this.eventIdentity(group.event);
+          result.push({
+            key: this.chronoGroupRowKey(group.key),
+            payload: { type: 'app', app: groupIdentity.app, title: '' },
+            expansion: { type: 'chrono', key: group.key },
+          });
+          if (!this.expandedTimelineBlocks[group.key]) continue;
+          for (const e of group.subEvents) {
+            const identity = this.eventIdentity(e);
+            result.push({
+              key: this.chronoEventRowKey(group.key, e),
+              payload: {
+                type: 'title',
+                app: identity.app,
+                title: identity.title,
+                rawTitle: identity.rawTitle || identity.title,
+              },
+            });
           }
         }
       }
@@ -1392,9 +1472,15 @@ export default {
       this.$set(this.expandedTimelineBlocks, key, !this.expandedTimelineBlocks[key]);
     },
 
+    setViewMode(mode: 'unified' | 'apps' | 'chrono') {
+      if (this.viewMode === mode) return;
+      this.viewMode = mode;
+      this.clearSelection();
+    },
+
     onTimelineBlockClick(block: any) {
       // Switch to chrono view and scroll to this block's time
-      this.viewMode = 'chrono';
+      this.setViewMode('chrono');
       this.$nextTick(() => {
         const scroll = this.$refs.activitiesScroll as HTMLElement | undefined;
         if (!scroll) return;
@@ -1767,8 +1853,21 @@ export default {
       return catKey + '/APP:' + app;
     },
 
+    catActivityRowKey(catKey: string): string {
+      return 'CAT:' + catKey;
+    },
+
     titleRowKey(catKey: string, app: string, title: string): string {
       return catKey + '/APP:' + app + '/T:' + title;
+    },
+
+    chronoGroupRowKey(groupKey: string): string {
+      return 'CHRONO:' + groupKey;
+    },
+
+    chronoEventRowKey(groupKey: string, e: any): string {
+      const identity = this.eventIdentity(e);
+      return this.chronoGroupRowKey(groupKey) + '/EVENT:' + e.timestamp + '/' + identity.app + '/' + identity.title;
     },
 
     // Unified view app rows: modifier key → multiselect, plain click → expand toggle
@@ -1792,6 +1891,21 @@ export default {
       }
     },
 
+    onChronoEventRowClick(groupKey: string, e: any, evt: MouseEvent) {
+      if (this.isDraggingActivity) return;
+      const identity = this.eventIdentity(e);
+      this.onActivityRowClick(
+        this.chronoEventRowKey(groupKey, e),
+        {
+          type: 'title',
+          app: identity.app,
+          title: identity.title,
+          rawTitle: identity.rawTitle || identity.title,
+        },
+        evt
+      );
+    },
+
     onActivityRowClick(key: string, payload: any, evt: MouseEvent) {
       evt.preventDefault();
       if (evt.shiftKey && this.lastClickedKey) {
@@ -1804,7 +1918,7 @@ export default {
           const hi = Math.max(fromIdx, toIdx);
           for (let i = lo; i <= hi; i++) {
             this.$set(this.selectedRowKeys, rows[i].key, true);
-            this.$set(this.selectedRowPayloads, rows[i].key, rows[i].payload);
+            if (rows[i].payload) this.$set(this.selectedRowPayloads, rows[i].key, rows[i].payload);
           }
         }
       } else if (evt.metaKey || evt.ctrlKey) {
@@ -1832,14 +1946,129 @@ export default {
       this.lastClickedKey = null;
     },
 
-    // ─── KEYBOARD NAVIGATION (#44) ───────────────────────────────
+    selectKeyboardActivityRow(row: any) {
+      this.selectedRowKeys = {};
+      this.selectedRowPayloads = {};
+      this.$set(this.selectedRowKeys, row.key, true);
+      if (row.payload) this.$set(this.selectedRowPayloads, row.key, row.payload);
+      this.lastClickedKey = row.key;
+      this.scrollActivityRowIntoView(row.key);
+    },
+
+    scrollActivityRowIntoView(key: string) {
+      this.$nextTick(() => {
+        const scroll = this.$refs.activitiesScroll as HTMLElement | undefined;
+        if (!scroll) return;
+        const rows = Array.from(scroll.querySelectorAll('[data-row-key]')) as HTMLElement[];
+        const row = rows.find((el: HTMLElement) => el.dataset.rowKey === key);
+        if (row) row.scrollIntoView({ block: 'nearest' });
+      });
+    },
+
+    moveActivitySelection(direction: number): boolean {
+      const rows = this.visibleActivityRowKeys as any[];
+      if (!rows.length) return false;
+
+      let selectedIdx = rows.findIndex((row: any) =>
+        row.key === this.lastClickedKey && this.selectedRowKeys[row.key]
+      );
+      if (selectedIdx < 0) selectedIdx = direction > 0 ? -1 : rows.length;
+      const nextIdx = Math.max(0, Math.min(rows.length - 1, selectedIdx + direction));
+      this.selectKeyboardActivityRow(rows[nextIdx]);
+      return true;
+    },
+
+    toggleSelectedActivityExpansion(): boolean {
+      const selected = (this.visibleActivityRowKeys as any[])
+        .find((row: any) => row.key === this.lastClickedKey && this.selectedRowKeys[row.key]);
+      if (!selected || !selected.expansion) return false;
+
+      if (selected.expansion.type === 'cat') this.toggleExpandCat(selected.expansion.key);
+      else if (selected.expansion.type === 'app') this.toggleExpandApp(selected.expansion.key);
+      else this.toggleChronoBlock(selected.expansion.key);
+      return true;
+    },
+
+    assignSelectionToShortcutCategory(position: number): boolean {
+      const catStore = this.categoryStore as any;
+      const targetCat = (this.shortcutCategories as any[])[position];
+      const selected = Object.values(this.selectedRowPayloads as Record<string, any>);
+      if (!targetCat || selected.length === 0) return false;
+
+      for (const payload of selected) {
+        const rule = payload.type === 'app'
+          ? { type: 'app', app: payload.app }
+          : {
+              type: 'title',
+              app: payload.app,
+              title: payload.title,
+              rawTitle: payload.rawTitle || payload.title,
+            };
+        this.addManualCategorizationRule(targetCat, rule, catStore);
+      }
+      catStore.save();
+      this.clearSelection();
+      return true;
+    },
+
+    focusSearch() {
+      const input = this.$refs.searchInput as HTMLInputElement | undefined;
+      if (input) input.focus();
+    },
+
+    clearShortcutFiltersAndSelection() {
+      this.searchQuery = '';
+      this.selectedCatFilter = null;
+      this.clearSelection();
+    },
+
+    openShortcutReference() {
+      this.showShortcutReference = true;
+    },
+
+    closeShortcutReference() {
+      this.showShortcutReference = false;
+    },
+
+    isShortcutEditingTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        target.isContentEditable ||
+        !!target.closest('[contenteditable="true"]');
+    },
+
+    // ─── KEYBOARD NAVIGATION (#44/#51) ───────────────────────────
     onGlobalKeyDown(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (this.isShortcutEditingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (this.showShortcutReference) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          this.closeShortcutReference();
+        }
+        return;
+      }
+      if (this.showOnboarding) return;
+
       if (e.key === 'ArrowLeft') { e.preventDefault(); this.prevDay(); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); if (!this.isToday) this.nextDay(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); this.moveActivitySelection(-1); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); this.moveActivitySelection(1); }
       else if (e.key === 't' || e.key === 'T') { e.preventDefault(); this.goToToday(); }
-      else if (e.key === 'Escape') { this.clearSelection(); }
+      else if (e.key === 'u' || e.key === 'U') { e.preventDefault(); this.setViewMode('unified'); }
+      else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); this.setViewMode('apps'); }
+      else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); this.setViewMode('chrono'); }
+      else if (e.key === '/') { e.preventDefault(); this.focusSearch(); }
+      else if (e.key === '?') { e.preventDefault(); this.openShortcutReference(); }
+      else if (e.key === 'Escape') { e.preventDefault(); this.clearShortcutFiltersAndSelection(); }
+      else if ((e.key === ' ' || e.key === 'Spacebar') && this.toggleSelectedActivityExpansion()) {
+        e.preventDefault();
+      } else if (/^[1-9]$/.test(e.key) && this.assignSelectionToShortcutCategory(Number(e.key) - 1)) {
+        e.preventDefault();
+      }
     },
 
     goToToday() {
@@ -2653,8 +2882,86 @@ export default {
   &:hover { color: var(--text); border-color: var(--border-hover); }
 }
 
-/* #34: Multi-select highlight */
-.act-row--title.row-selected {
+/* #51: Shortcut reference */
+.shortcut-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.68);
+  backdrop-filter: blur(4px);
+}
+
+.shortcut-modal {
+  width: min(420px, calc(100vw - 32px));
+  background: #1a1f2e;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+
+.shortcut-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  h2 {
+    margin: 0;
+    color: var(--text);
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: 0;
+  }
+}
+
+.shortcut-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  &:hover { border-color: var(--border-hover); color: var(--text); }
+}
+
+.shortcut-list {
+  display: grid;
+  gap: 4px;
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 30px;
+  color: var(--muted);
+  font-size: 13px;
+  kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    padding: 1px 7px;
+    border: 1px solid var(--border-hover);
+    border-radius: 5px;
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+  }
+}
+
+/* #34/#51: Activity selection highlight */
+.act-row.row-selected {
   background: rgba(75, 139, 255, 0.15) !important;
   border-left: 2px solid #4b8bff;
 }
@@ -2706,6 +3013,25 @@ export default {
   flex: 1;
   overflow-y: auto;
   padding: 4px 0;
+}
+
+.chronio-center-footer {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid var(--border);
+  padding: 6px 12px;
+  flex-shrink: 0;
+}
+
+.chronio-shortcuts-hint {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 3px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  &:hover { color: var(--text); background: rgba(255,255,255,0.05); }
 }
 
 .act-empty {
