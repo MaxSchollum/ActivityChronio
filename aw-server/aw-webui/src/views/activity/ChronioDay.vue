@@ -18,7 +18,7 @@
       .tl-block(
         v-for="block in timelineCanvas.blocks"
         :key="'b-' + block.label + block.range"
-        :style="{background: block.color, top: block.top + 'px', height: block.heightPx + 'px'}"
+        :style="{background: block.color, top: block.top + 'px', height: block.heightPx + 'px', opacity: block.opacity}"
         :title="blockTooltip(block)"
         @click="$emit('block-click', block)"
       )

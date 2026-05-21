@@ -1269,7 +1269,7 @@ export default {
       const blocks = blocks_raw.map((item: any) => {
         const topPx = (item.startMs - canvasStartMs) * SCALE;
         const heightPx = Math.max(4, (item.endMs - item.startMs) * SCALE);
-        return { ...item, top: topPx, heightPx };
+        return { ...item, top: topPx, heightPx, opacity: this.blockOpacity(item) };
       });
 
       // Current time red line (today only, if within visible range)
@@ -1500,6 +1500,7 @@ export default {
         ...block,
         heightPx: Math.max(4, (block.endMs - block.startMs) * scale),
         top: (block.startMs - canvasStartMs) * scale,
+        opacity: this.blockOpacity(block),
       }));
       let nowPx: number | null = null;
       if (moment(date).isSame(moment(), 'day')) {
