@@ -12,6 +12,7 @@ div.chronio-settings-view
     nav.settings-nav
       button(:class="{active: activeSection === 'tracking'}" @click="scrollTo('tracking')") Tracking
       button(:class="{active: activeSection === 'categories'}" @click="scrollTo('categories')") Categories
+      button(:class="{active: activeSection === 'rules'}" @click="scrollTo('rules')") Rules
       button(:class="{active: activeSection === 'appearance'}" @click="scrollTo('appearance')") Appearance
       button(:class="{active: activeSection === 'screenshots'}" @click="scrollTo('screenshots')") Screenshots
       button(:class="{active: activeSection === 'privacy'}" @click="scrollTo('privacy')") Privacy
@@ -71,6 +72,12 @@ div.chronio-settings-view
             input(type="file" accept="application/json,.json" @change="importCategories")
           button.settings-action.warning(@click="restoreCategories") Restore defaults
         p.settings-inline-status(v-if="categoryStatus") {{ categoryStatus }}
+
+      section.settings-section(ref="rules" id="rules")
+        .section-heading
+          h2 Rules
+          p Review and change the categorization rules saved by drag-and-drop or add one manually.
+        ChronioRulesManager
 
       section.settings-section(ref="appearance" id="appearance")
         .section-heading
@@ -179,11 +186,16 @@ div.chronio-settings-view
 import { useCategoryStore } from '~/stores/categories';
 import { useSettingsStore } from '~/stores/settings';
 import { detectPreferredTheme } from '~/util/theme';
+import ChronioRulesManager from './ChronioRulesManager.vue';
 
 type ListSettingKey = 'chronioIgnoredApps' | 'chronioExcludedApps' | 'chronioExcludedTitlePatterns';
 
 export default {
   name: 'ChronioSettings',
+
+  components: {
+    ChronioRulesManager,
+  },
 
   data() {
     return {
