@@ -45,7 +45,7 @@ div.chronio-view
     .chronio-sidebar
       nav.sidebar-nav
         .sidebar-nav-item.active Activities
-        .sidebar-nav-item Stats
+        .sidebar-nav-item(@click="$router.push('/chronio/stats')") Stats
         .sidebar-nav-item Reports
         .sidebar-nav-item(@click="$router.push('/chronio/settings')") Settings
 
