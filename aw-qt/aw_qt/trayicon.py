@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional
 import aw_core
 import iso8601
 from PyQt6 import QtCore
-from PyQt6.QtGui import QIcon, QPainter, QPen, QBrush, QColor, QCursor
+from PyQt6.QtGui import QIcon, QPainter, QPen, QBrush, QColor, QCursor, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QMenu,
@@ -86,6 +86,32 @@ def open_dir(d: str) -> None:
     else:
         env = get_env()
         subprocess.Popen(["xdg-open", d], env=env)
+
+
+def _chronio_menubar_icon() -> QIcon:
+    size = 18
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+    pen = QPen(QColor(0, 0, 0))
+    pen.setWidthF(1.8)
+    pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(QtCore.QRectF(2.5, 2.5, 13, 13))
+
+    center = QtCore.QPointF(9, 9)
+    painter.drawLine(center, QtCore.QPointF(9, 5.25))
+    painter.drawLine(center, QtCore.QPointF(12.25, 10.75))
+    painter.end()
+
+    icon = QIcon(pixmap)
+    icon.setIsMask(True)
+    return icon
 
 
 def _fetch_json(url: str, timeout_s: float = 2.0) -> Optional[Dict[str, Any]]:
@@ -407,6 +433,8 @@ def run(manager: Manager, testing: bool = False) -> Any:
     # print(QIcon.themeSearchPaths())
 
     app = QApplication(sys.argv)
+    app.setApplicationName("Chronio")
+    app.setApplicationDisplayName("Chronio")
 
     # This is needed for the icons to get picked up with PyInstaller
     scriptdir = Path(__file__).parent
@@ -448,9 +476,7 @@ def run(manager: Manager, testing: bool = False) -> Any:
         sys.exit(1)
 
     if sys.platform == "darwin":
-        icon = QIcon("icons:black-monochrome-logo.png")
-        # Allow macOS to use filters for changing the icon's color
-        icon.setIsMask(True)
+        icon = _chronio_menubar_icon()
     else:
         icon = QIcon("icons:logo.png")
 
