@@ -54,8 +54,8 @@ export default defineConfig(({ mode }) => {
           enabled: true,
         },
         manifest: {
-          name: 'ActivityWatch',
-          short_name: 'ActivityWatch',
+          name: 'Chronio',
+          short_name: 'Chronio',
           description: 'Automatically track your computer usage',
           theme_color: '#ffffff',
           icons: [

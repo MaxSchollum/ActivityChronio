@@ -397,8 +397,12 @@ const BROWSER_SUFFIXES = [
 const BROWSER_APP_NAMES = new Set(BROWSER_SUFFIXES);
 
 const KNOWN_BROWSER_SITES: { label: string; patterns: RegExp[] }[] = [
-  { label: 'ChatGPT', patterns: [/chatgpt/i, /openai/i] },
-  { label: 'X / Twitter', patterns: [/(^|\W)x\.com($|\W)/i, /twitter/i, /\bX\b/] },
+  {
+    label: 'X / Twitter',
+    patterns: [/(^|\W)x\.com($|\W)/i, /twitter/i, /^X$/i, /(?:^|\s[/-]\s)X$/i],
+  },
+  { label: 'ChatGPT', patterns: [/chatgpt/i, /chat\.openai\.com/i] },
+  { label: 'Instagram', patterns: [/instagram/i] },
   { label: 'GitHub', patterns: [/github/i] },
   { label: 'YouTube', patterns: [/youtube/i] },
   { label: 'Gmail', patterns: [/gmail/i] },
@@ -1143,8 +1147,10 @@ export default {
           host = url;
         }
       }
-      const haystack = [normalized, host, url].filter(Boolean).join('\n');
-      const site = KNOWN_BROWSER_SITES.find((s: any) => s.patterns.some((re: RegExp) => re.test(haystack)));
+      const siteHints = [host, url].filter(Boolean).join('\n');
+      const site =
+        KNOWN_BROWSER_SITES.find((s: any) => s.patterns.some((re: RegExp) => re.test(siteHints))) ||
+        KNOWN_BROWSER_SITES.find((s: any) => s.patterns.some((re: RegExp) => re.test(normalized)));
       if (!site) return null;
 
       const parts = normalized.split(/\s+(?:-|—|\|)\s+/).filter(Boolean);
@@ -2013,6 +2019,11 @@ export default {
   white-space: nowrap;
 }
 
+.chronio-chip.date {
+  min-width: 148px;
+  text-align: center;
+}
+
 .date-input {
   position: absolute;
   top: 100%;
@@ -2030,6 +2041,7 @@ export default {
 .chronio-metric {
   display: inline-flex;
   gap: 6px;
+  width: 108px;
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;

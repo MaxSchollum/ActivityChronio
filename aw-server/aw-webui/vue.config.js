@@ -60,7 +60,7 @@ export default {
     },
   },
   pwa: {
-    name: 'ActivityWatch',
+    name: 'Chronio',
     iconPaths: {
       faviconSVG: null, // SVG won't render without needed fonts etc, so fall back to png
       favicon32: 'logo.png',

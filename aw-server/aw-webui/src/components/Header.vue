@@ -5,7 +5,7 @@ div(:class="{'fixed-top-padding': fixedTopMenu}")
     b-navbar-nav.d-block.d-lg-none
       b-navbar-brand(to="/" style="background-color: transparent;")
         img.aligh-middle(src="/logo.png" style="height: 1.5em;")
-        span.ml-2.align-middle(style="font-size: 1em; color: #000;") ActivityWatch
+        span.ml-2.align-middle(style="font-size: 1em; color: #000;") Chronio
 
     b-navbar-toggle(target="nav-collapse")
 
@@ -53,7 +53,7 @@ div(:class="{'fixed-top-padding': fixedTopMenu}")
       b-navbar-nav.abs-center.d-none.d-lg-block
         b-navbar-brand(to="/" style="background-color: transparent;")
           img.ml-0.aligh-middle(src="/logo.png" style="height: 1.5em;")
-          span.ml-2.align-middle(style="font-size: 1.0em; color: #000;") ActivityWatch
+          span.ml-2.align-middle(style="font-size: 1.0em; color: #000;") Chronio
 
       b-navbar-nav.ml-auto
         b-nav-item-dropdown
