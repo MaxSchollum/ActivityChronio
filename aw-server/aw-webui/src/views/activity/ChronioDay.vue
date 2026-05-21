@@ -58,6 +58,22 @@ export default {
       const nowPx = this.timelineCanvas.nowPx;
       el.scrollTop = nowPx === null ? 0 : Math.max(0, nowPx - el.clientHeight / 3);
     },
+    scrollToTimestamp(timestamp: number) {
+      const el = this.$refs.timelineScroll as HTMLElement | undefined;
+      if (!el) return;
+
+      const blocks = this.timelineCanvas.blocks || [];
+      const block = blocks.find((item: any) =>
+        timestamp >= item.startMs && timestamp <= item.endMs
+      );
+      const hourHeight = this.timelineCanvas.hours?.length > 1
+        ? this.timelineCanvas.hours[1].top - this.timelineCanvas.hours[0].top
+        : 56;
+      const targetPx = block
+        ? block.top
+        : ((timestamp - this.timelineCanvas.canvasStartMs) / 3600000) * hourHeight;
+      el.scrollTop = Math.max(0, targetPx - el.clientHeight / 3);
+    },
   },
 };
 </script>
