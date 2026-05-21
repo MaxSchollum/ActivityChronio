@@ -168,13 +168,25 @@ aw-qt/media/logo/logo.icns:
 	rm -R build/MyIcon.iconset
 	mv build/MyIcon.icns aw-qt/media/logo/logo.icns
 
-dist/ActivityWatch.app: aw-qt/media/logo/logo.icns
+# Generate the custom Chronio app icon (macOS only, requires AppKit via PyObjC)
+aw-qt/media/logo/chronio.icns:
+	python3 scripts/package/create_icon.py
+
+# Generate the DMG background image (macOS only)
+scripts/package/dmg-background.png:
+	python3 scripts/package/create_dmg_background.py
+
+# Download Sparkle.framework for auto-updates
+Frameworks/Sparkle.framework:
+	./scripts/package/setup_sparkle.sh
+
+dist/Chronio.app: aw-qt/media/logo/chronio.icns scripts/package/dmg-background.png
 	pyinstaller --clean --noconfirm aw.spec
 
-dist/ActivityWatch.dmg: dist/ActivityWatch.app
+dist/Chronio.dmg: dist/Chronio.app
 	# NOTE: This does not codesign the dmg, that is done in the CI config
 	pip install dmgbuild
-	dmgbuild -s scripts/package/dmgbuild-settings.py -D app=dist/ActivityWatch.app "ActivityWatch" dist/ActivityWatch.dmg
+	dmgbuild -s scripts/package/dmgbuild-settings.py -D app=dist/Chronio.app "Chronio" dist/Chronio.dmg
 
 dist/notarize:
 	./scripts/notarize.sh

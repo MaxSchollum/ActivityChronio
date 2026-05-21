@@ -186,21 +186,21 @@ jobs:
 
         # Build .app and .dmg
         source venv/bin/activate
-        make dist/ActivityWatch.dmg
+        make dist/Chronio.dmg
 
         # codesign and notarize
         if [ -n "$APPLE_EMAIL" ]; then
-          codesign --verbose -s ${APPLE_PERSONALID} dist/ActivityWatch.dmg
+          codesign --verbose -s "${APPLE_PERSONALID}" dist/Chronio.dmg
 
           # Run prechecks
           brew install akeru-inc/tap/xcnotary
-          xcnotary precheck dist/ActivityWatch.app
-          xcnotary precheck dist/ActivityWatch.dmg
+          xcnotary precheck dist/Chronio.app
+          xcnotary precheck dist/Chronio.dmg
 
           # Notarize
           make dist/notarize
         fi
-        mv dist/ActivityWatch.dmg dist/activitywatch-$(scripts/package/getversion.sh)-macos-x86_64.dmg
+        mv dist/Chronio.dmg dist/chronio-$(scripts/package/getversion.sh)-macos-x86_64.dmg
       env:
         APPLE_EMAIL: ${{ secrets.APPLE_EMAIL }}
         APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -224,7 +224,9 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: builds-${{ runner.os }}-py${{ matrix.python_version }}
-        path: dist/activitywatch-*.*
+        path: |
+          dist/activitywatch-*.*
+          dist/chronio-*.*
 
   release-notes:
     runs-on: ubuntu-latest
@@ -295,6 +297,8 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           draft: true
-          files: dist/*/activitywatch-*.*
+          files: |
+            dist/*/activitywatch-*.*
+            dist/*/chronio-*.*
           body_path: dist/release_notes/release_notes.md
           prerelease: ${{ !(steps.version.outputs.is_stable == 'true') }}  # must compare to true, since boolean outputs are actually just strings, and "false" is truthy since it's not empty: https://github.com/actions/runner/issues/1483#issuecomment-994986996
