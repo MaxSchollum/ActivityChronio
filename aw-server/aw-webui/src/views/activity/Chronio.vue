@@ -8,7 +8,7 @@ div.chronio-view
       .chronio-date-nav
         button.chronio-nav-btn(@click="prevDay") &larr;
         .chronio-chip.date(@click="showDatePicker = !showDatePicker")
-          span {{ dateDisplay }}
+          span {{ periodDisplay }}
           input.date-input(
             v-if="showDatePicker"
             type="date"
@@ -20,6 +20,10 @@ div.chronio-view
           )
         button.chronio-nav-btn(@click="nextDay" :disabled="isToday") &rarr;
         button.chronio-today-btn(v-if="!isToday" @click="goToToday") Today
+      .chronio-period-toggle
+        button(:class="{active: selectedPeriod === 'day'}" @click="setPeriod('day')") Day
+        button(:class="{active: selectedPeriod === 'week'}" @click="setPeriod('week')") Week
+        button(:class="{active: selectedPeriod === 'month'}" @click="setPeriod('month')") Month
       .chronio-metric
         span.label Tracked:
         span.value {{ totalTrackedTime }}
@@ -35,7 +39,7 @@ div.chronio-view
   div.chronio-loading(v-if="loading")
     span Loading activity data&hellip;
 
-  .chronio-body(v-else)
+  .chronio-body(v-else :class="'period-' + selectedPeriod")
 
     //- ─── LEFT SIDEBAR ───────────────────────────────────────────────
     .chronio-sidebar
@@ -190,8 +194,23 @@ div.chronio-view
             label Custom:
             input(type="color" :value="colorPickerRow ? colorPickerRow.color : '#ffffff'" @input="applyColor($event.target.value)")
 
+    ChronioWeek(
+      v-if="selectedPeriod === 'week'"
+      :days="weekDays"
+      :label="periodDisplay"
+      :score-label="scoreLabel(activeWindowEvents)"
+      @select-day="selectDay"
+    )
+
+    ChronioMonth(
+      v-else-if="selectedPeriod === 'month'"
+      :days="monthDays"
+      :label="periodDisplay"
+      @select-day="selectDay"
+    )
+
     //- ─── CENTER: ALL ACTIVITIES ─────────────────────────────────────
-    .chronio-center(@click.self="clearSelection")
+    .chronio-center(v-else @click.self="clearSelection")
       .center-header
         .center-title
           | {{ centerTitle }}:&nbsp;
@@ -318,35 +337,14 @@ div.chronio-view
         button.chronio-shortcuts-hint(type="button" title="Show keyboard shortcuts (?)" @click="openShortcutReference") ⌨ Shortcuts
 
     //- ─── RIGHT: TIMELINE ────────────────────────────────────────────
-    .chronio-timeline-panel
-      .timeline-scroll(ref="timelineScroll")
-        .chronio-empty(v-if="!timeline.length && !activeWindowEvents.length") —
-        .chronio-empty(v-else-if="!timeline.length") No events long enough to display
-        .timeline-canvas(v-else :style="{height: timelineCanvas.totalHeight + 'px'}")
-          //- Hour gridlines + labels
-          .tl-hour(
-            v-for="h in timelineCanvas.hours"
-            :key="h.h"
-            :style="{top: h.top + 'px'}"
-          )
-            span.tl-hour-label {{ h.label }}
-            .tl-hour-line
-          //- Current time indicator
-          .tl-now-line(
-            v-if="timelineCanvas.nowPx !== null"
-            :style="{top: timelineCanvas.nowPx + 'px'}"
-          )
-          //- Activity blocks
-          .tl-block(
-            v-for="block in timelineCanvas.blocks"
-            :key="'b-' + block.label + block.range"
-            :style="{background: block.color, top: block.top + 'px', height: block.heightPx + 'px', opacity: blockOpacity(block)}"
-            :title="blockTooltip(block)"
-            @click="onTimelineBlockClick(block)"
-          )
-            .tl-block-inner(v-if="block.heightPx > 20")
-              .tl-title {{ block.label }}
-              .tl-time-range(v-if="block.heightPx > 38") {{ block.range }}
+    ChronioDay(
+      v-if="selectedPeriod === 'day'"
+      ref="timeline"
+      :timeline="timeline"
+      :timeline-canvas="timelineCanvas"
+      :active-event-count="activeWindowEvents.length"
+      @block-click="onTimelineBlockClick"
+    )
 
   //- ── TOAST NOTIFICATIONS (#78) ───────────────────────────────────────
   .chronio-toasts
@@ -399,9 +397,11 @@ import { useBucketsStore } from '~/stores/buckets';
 import { useCategoryStore } from '~/stores/categories';
 import { useSettingsStore } from '~/stores/settings';
 import { get_today_with_offset } from '~/util/time';
-import { dateToTimeperiod } from '~/util/timeperiod';
 import { getColorFromString } from '~/util/color';
 import { getClient } from '~/util/awclient';
+import ChronioDay from './ChronioDay.vue';
+import ChronioMonth from './ChronioMonth.vue';
+import ChronioWeek from './ChronioWeek.vue';
 
 // System processes that are never real user activity
 const SYSTEM_PROCESS_BLOCKLIST = new Set([
@@ -486,16 +486,30 @@ function formatHHMM(ts: any): string {
   return moment(ts).format('HH:mm');
 }
 
+function formatHourLabel(hour: number): string {
+  const normalized = ((hour % 24) + 24) % 24;
+  if (normalized === 0) return '12am';
+  if (normalized < 12) return `${normalized}am`;
+  if (normalized === 12) return '12pm';
+  return `${normalized - 12}pm`;
+}
+
 function gradientForApp(app: string, index: number): string {
   return GRADIENTS[index % GRADIENTS.length];
 }
 
 export default {
   name: 'ChronioView',
+  components: {
+    ChronioDay,
+    ChronioMonth,
+    ChronioWeek,
+  },
 
   data() {
     return {
       selectedDate: '' as string,
+      selectedPeriod: 'day' as 'day' | 'week' | 'month',
       searchQuery: '' as string,
       showDatePicker: false as boolean,
       loading: true as boolean,
@@ -561,7 +575,12 @@ export default {
     categoryStore() { return useCategoryStore(); },
 
     isToday(): boolean {
-      return moment(this.selectedDate).isSame(moment(), 'day');
+      const today = moment();
+      if (this.selectedPeriod === 'week') {
+        return moment(this.periodStart).isSame(this.periodStartFor(today, 'week'), 'day');
+      }
+      if (this.selectedPeriod === 'month') return moment(this.selectedDate).isSame(today, 'month');
+      return moment(this.selectedDate).isSame(today, 'day');
     },
 
     isFuture(): boolean {
@@ -582,6 +601,20 @@ export default {
     dateDisplay(): string {
       if (!this.selectedDate) return '—';
       return moment(this.selectedDate).format('MMM D, YYYY');
+    },
+
+    periodStart(): string {
+      return this.periodStartFor(moment(this.selectedDate), this.selectedPeriod).format('YYYY-MM-DD');
+    },
+
+    periodDisplay(): string {
+      if (!this.selectedDate) return '—';
+      if (this.selectedPeriod === 'week') {
+        const start = moment(this.periodStart);
+        return start.format('MMM D') + ' - ' + start.clone().add(6, 'days').format('MMM D, YYYY');
+      }
+      if (this.selectedPeriod === 'month') return moment(this.selectedDate).format('MMMM YYYY');
+      return this.dateDisplay;
     },
 
     // AFK intervals for the day
@@ -1050,6 +1083,63 @@ export default {
       return map;
     },
 
+    weekDays(): any[] {
+      const start = moment(this.periodStart);
+      return Array.from({ length: 7 }, (_, index) => {
+        const day = start.clone().add(index, 'days');
+        const date = day.format('YYYY-MM-DD');
+        const events = this.eventsForDate(this.scopedActiveWindowEvents as any[], date);
+        const timeline = this.buildTimeline(events);
+        return {
+          activeEventCount: events.length,
+          date,
+          dayLabel: day.format('MMM D'),
+          timeline,
+          timelineCanvas: this.buildTimelineCanvas(timeline, date),
+          trackedTime: formatDuration(this.sumDuration(events)),
+          weekday: day.format('ddd'),
+        };
+      });
+    },
+
+    monthDays(): any[] {
+      const monthStart = moment(this.selectedDate).startOf('month');
+      const gridStart = monthStart.clone().startOf('isoWeek');
+      const monthEnd = monthStart.clone().endOf('month');
+      const gridEnd = monthEnd.clone().endOf('isoWeek');
+      const maxDuration = Math.max(
+        1,
+        ...Array.from({ length: monthStart.daysInMonth() }, (_, index) =>
+          this.sumDuration(
+            this.eventsForDate(
+              this.activeWindowEvents as any[],
+              monthStart.clone().add(index, 'days').format('YYYY-MM-DD')
+            )
+          )
+        )
+      );
+      const days: any[] = [];
+      const cursor = gridStart.clone();
+      while (cursor.isSameOrBefore(gridEnd, 'day')) {
+        const date = cursor.format('YYYY-MM-DD');
+        const events = this.eventsForDate(this.activeWindowEvents as any[], date);
+        const duration = this.sumDuration(events);
+        days.push({
+          barColor: this.scoreForEvents(events) < 0 ? '#ef4444' : '#22c55e',
+          date,
+          day: cursor.date(),
+          inMonth: cursor.isSame(monthStart, 'month'),
+          isToday: cursor.isSame(moment(), 'day'),
+          key: date,
+          productiveWidth:
+            duration > 0 ? Math.max(8, Math.round((duration / maxDuration) * 100)) + '%' : '0',
+          trackedTime: duration > 0 ? formatDuration(duration) : '',
+        });
+        cursor.add(1, 'day');
+      }
+      return days;
+    },
+
     // Timeline: merge consecutive same-app events, full day
     timeline(): any[] {
       const events: any[] = this.scopedActiveWindowEvents;
@@ -1171,7 +1261,7 @@ export default {
       // Hour labels + gridlines for visible range only
       const hours = Array.from({ length: endHour - startHour + 1 }, (_, i) => {
         const h = startHour + i;
-        const label = h === 0 || h === 24 ? '12am' : h < 12 ? `${h}am` : h === 12 ? '12pm' : `${h - 12}pm`;
+        const label = formatHourLabel(h);
         return { h, label, top: i * HOUR_PX };
       });
 
@@ -1257,6 +1347,166 @@ export default {
     // Expose module-level helpers to the template
     formatDuration(seconds: number): string {
       return formatDuration(seconds);
+    },
+
+    periodStartFor(date: any, period: 'day' | 'week' | 'month'): any {
+      const start = moment(date);
+      if (period === 'month') return start.startOf('month');
+      if (period === 'week') {
+        const weekStart = this.settingsStore.startOfWeek || 'Monday';
+        const startDay = weekStart === 'Saturday' ? 6 : weekStart === 'Sunday' ? 0 : 1;
+        return start.startOf('day').subtract((start.day() - startDay + 7) % 7, 'days');
+      }
+      return start.startOf('day');
+    },
+
+    sumDuration(events: any[]): number {
+      return events.reduce((total: number, event: any) => total + (event.duration || 0), 0);
+    },
+
+    eventsForDate(events: any[], date: string): any[] {
+      const start = moment(date).startOf('day');
+      const end = start.clone().add(1, 'day');
+      return events.filter((event: any) => {
+        const timestamp = moment(event.timestamp);
+        return timestamp.isSameOrAfter(start) && timestamp.isBefore(end);
+      });
+    },
+
+    scoreForEvents(events: any[]): number {
+      return events.reduce((total: number, event: any) => {
+        const score = (this.categoryStore as any).get_category_score(this.classifyEventCategory(event));
+        return total + ((event.duration || 0) / 3600) * score;
+      }, 0);
+    },
+
+    scoreLabel(events: any[]): string {
+      const score = this.scoreForEvents(events);
+      return (score >= 0 ? '+' : '') + score.toFixed(1);
+    },
+
+    buildTimeline(events: any[]): any[] {
+      if (!events.length) return [];
+      let filtered = events;
+      if (this.searchQuery) {
+        const q = this.searchQuery.toLowerCase();
+        filtered = events.filter((event: any) => {
+          return (
+            (event.data?.app || '').toLowerCase().includes(q) ||
+            (event.data?.title || '').toLowerCase().includes(q)
+          );
+        });
+      }
+
+      const sorted = [...filtered].sort(
+        (a: any, b: any) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf()
+      );
+      const merged: any[] = [];
+      let current: any = null;
+      for (const event of sorted) {
+        const app = this.eventIdentity(event).app;
+        const eventStart = moment(event.timestamp).valueOf();
+        const gapMs = current ? eventStart - current.end.valueOf() : Infinity;
+        if (current && current.app === app && gapMs < MAX_MERGE_GAP_MS) {
+          const eventEnd = moment(event.timestamp).add(event.duration, 'seconds');
+          if (eventEnd.isAfter(current.end)) current.end = eventEnd;
+          current.duration += event.duration;
+          continue;
+        }
+        if (current) merged.push(current);
+        current = {
+          app,
+          category: this.classifyEventCategory(event),
+          duration: event.duration,
+          end: moment(event.timestamp).add(event.duration, 'seconds'),
+          event,
+          start: moment(event.timestamp),
+        };
+      }
+      if (current) merged.push(current);
+
+      const blocks: any[] = [];
+      for (let index = 0; index < merged.length; index++) {
+        const block = merged[index];
+        const previous = blocks.length > 0 ? blocks[blocks.length - 1] : null;
+        if (block.duration < 30 && previous && previous.app !== block.app) {
+          const next = index + 1 < merged.length ? merged[index + 1] : null;
+          const previousGap = block.start.valueOf() - previous.end.valueOf();
+          const nextGap = next ? next.start.valueOf() - block.end.valueOf() : Infinity;
+          if (
+            next &&
+            next.app === previous.app &&
+            previousGap < MAX_MERGE_GAP_MS &&
+            nextGap < MAX_MERGE_GAP_MS
+          ) {
+            previous.end = block.end;
+            previous.duration += block.duration;
+            continue;
+          }
+        }
+        const gapMs = previous ? block.start.valueOf() - previous.end.valueOf() : Infinity;
+        if (previous && previous.app === block.app && gapMs < MAX_MERGE_GAP_MS) {
+          previous.end = block.end;
+          previous.duration += block.duration;
+        } else {
+          blocks.push({ ...block });
+        }
+      }
+
+      const appIndexes: Record<string, number> = {};
+      const categoryColors = this.appCategoryColors;
+      let appCount = 0;
+      return blocks
+        .filter((block: any) => block.duration >= 60)
+        .map((block: any) => {
+          if (!(block.app in appIndexes)) appIndexes[block.app] = appCount++;
+          const categoryColor =
+            (this.categoryStore as any).get_category_color(block.category || ['Uncategorized']) ||
+            categoryColors[block.app];
+          return {
+            color: categoryColor || gradientForApp(block.app, appIndexes[block.app]),
+            colorTitle: 'Category: ' + (block.category || ['Uncategorized']).join(' > '),
+            endMs: block.end.valueOf(),
+            event: block.event,
+            label: block.app,
+            range: formatHHMM(block.start.toISOString()) + ' – ' + formatHHMM(block.end.toISOString()),
+            startMs: block.start.valueOf(),
+          };
+        });
+    },
+
+    buildTimelineCanvas(blocksRaw: any[], date: string): any {
+      const scale = HOUR_PX / 3600000;
+      const dayStart = moment(date).startOf('day').valueOf();
+      const default8am = moment(date).hour(8).startOf('hour').valueOf();
+      const default10pm = moment(date).hour(22).startOf('hour').valueOf();
+      const earliestContent =
+        blocksRaw.length > 0 ? Math.min(...blocksRaw.map((block: any) => block.startMs)) : default8am;
+      const latestContent =
+        blocksRaw.length > 0 ? Math.max(...blocksRaw.map((block: any) => block.endMs)) : default10pm;
+      const canvasStartMs = moment(Math.min(earliestContent, default8am)).startOf('hour').valueOf();
+      const canvasEndMs = moment(Math.max(latestContent, default10pm))
+        .add(1, 'hour')
+        .startOf('hour')
+        .valueOf();
+      const startHour = Math.round((canvasStartMs - dayStart) / 3600000);
+      const endHour = Math.round((canvasEndMs - dayStart) / 3600000);
+      const hours = Array.from({ length: endHour - startHour + 1 }, (_, index) => {
+        const hour = startHour + index;
+        const label = formatHourLabel(hour);
+        return { h: hour, label, top: index * HOUR_PX };
+      });
+      const blocks = blocksRaw.map((block: any) => ({
+        ...block,
+        heightPx: Math.max(4, (block.endMs - block.startMs) * scale),
+        top: (block.startMs - canvasStartMs) * scale,
+      }));
+      let nowPx: number | null = null;
+      if (moment(date).isSame(moment(), 'day')) {
+        const nowMs = moment().valueOf();
+        if (nowMs >= canvasStartMs && nowMs <= canvasEndMs) nowPx = (nowMs - canvasStartMs) * scale;
+      }
+      return { blocks, canvasStartMs, hours, nowPx, totalHeight: (endHour - startHour) * HOUR_PX };
     },
 
     blockTooltip(block: any): string {
@@ -2160,18 +2410,47 @@ export default {
     },
 
     prevDay() {
-      this.selectedDate = moment(this.selectedDate).subtract(1, 'day').format('YYYY-MM-DD');
+      this.selectedDate = moment(this.selectedDate)
+        .subtract(1, this.selectedPeriod)
+        .format('YYYY-MM-DD');
+      this.syncRoute();
       this.refresh();
     },
     nextDay() {
       if (this.isToday) return;
-      this.selectedDate = moment(this.selectedDate).add(1, 'day').format('YYYY-MM-DD');
+      this.selectedDate = moment(this.selectedDate).add(1, this.selectedPeriod).format('YYYY-MM-DD');
+      this.syncRoute();
       this.refresh();
     },
     onDateChange(dateStr: string) {
       this.selectedDate = dateStr;
       this.showDatePicker = false;
+      this.syncRoute();
       this.refresh();
+    },
+
+    setPeriod(period: 'day' | 'week' | 'month') {
+      if (this.selectedPeriod === period) return;
+      this.selectedPeriod = period;
+      this.syncRoute();
+      this.refresh();
+    },
+
+    selectDay(date: string) {
+      this.selectedPeriod = 'day';
+      this.selectedDate = date;
+      this.syncRoute();
+      this.refresh();
+    },
+
+    routePath(): string {
+      return '/chronio/' + this.selectedPeriod + '/' + this.selectedDate;
+    },
+
+    syncRoute(replace = false) {
+      if (!this.selectedDate || this.$route.path === this.routePath()) return;
+      const navigation = replace ? this.$router.replace(this.routePath()) : this.$router.push(this.routePath());
+      navigation.catch(() => undefined);
     },
 
     async refresh(silent = false) {
@@ -2182,9 +2461,6 @@ export default {
       if (!silent) this.loading = true;
 
       try {
-        const settingsStore = this.settingsStore;
-        const timeperiod = dateToTimeperiod(this.selectedDate, settingsStore.startOfDay);
-
         // Collect all same-machine hostname variants (exclude IP addresses and 'unknown')
         const allHosts: string[] = (this.bucketsStore.hosts as string[])
           .filter((h: string) => h && h !== 'unknown' && !/^\d+\.\d+\.\d+\.\d+$/.test(h));
@@ -2192,8 +2468,10 @@ export default {
         const allWindowBuckets: string[] = allHosts.flatMap((h: string) => this.bucketsStore.bucketsWindow(h));
         const allAfkBuckets: string[] = allHosts.flatMap((h: string) => this.bucketsStore.bucketsAFK(h));
 
-        const startDate = moment(this.selectedDate).startOf('day').toDate();
-        const endDate = moment(this.selectedDate).endOf('day').toDate();
+        const start = this.periodStartFor(moment(this.selectedDate), this.selectedPeriod);
+        const end = start.clone().add(1, this.selectedPeriod);
+        const startDate = start.toDate();
+        const endDate = end.toDate();
         const params = { start: startDate, end: endDate, limit: -1 };
 
         // Fetch from all same-machine buckets in parallel and merge
@@ -2235,19 +2513,8 @@ export default {
     },
 
     scrollTimeline() {
-      const el = this.$refs.timelineScroll as HTMLElement | undefined;
-      if (!el) return;
-      const SCALE = HOUR_PX / 3600000;
-      const { canvasStartMs, nowPx } = this.timelineCanvas;
-      let targetPx: number;
-      if (this.isToday && nowPx !== null) {
-        // Scroll so "now" sits about 1/3 from the top
-        targetPx = nowPx - el.clientHeight / 3;
-      } else {
-        // Scroll to top (canvas already starts at first event / 8am)
-        targetPx = 0;
-      }
-      el.scrollTop = Math.max(0, targetPx);
+      const timeline = this.$refs.timeline as any;
+      if (timeline) timeline.scrollToNow();
     },
   },
 
@@ -2267,12 +2534,32 @@ export default {
         });
       }
     },
+    $route(to: any) {
+      const period = to.params.period;
+      const date = to.params.date;
+      if (period && ['day', 'week', 'month'].includes(period) && period !== this.selectedPeriod) {
+        this.selectedPeriod = period;
+      }
+      if (date && date !== this.selectedDate && moment(date, 'YYYY-MM-DD', true).isValid()) {
+        this.selectedDate = date;
+      }
+      if (this.host) this.refresh();
+    },
   },
 
   async mounted() {
     const settingsStore = this.settingsStore;
     await settingsStore.ensureLoaded();
-    this.selectedDate = get_today_with_offset(settingsStore.startOfDay);
+    const routePeriod = this.$route.params.period;
+    const routeDate = this.$route.params.date;
+    if (routePeriod && ['day', 'week', 'month'].includes(routePeriod)) {
+      this.selectedPeriod = routePeriod;
+    }
+    this.selectedDate =
+      routeDate && moment(routeDate, 'YYYY-MM-DD', true).isValid()
+        ? routeDate
+        : get_today_with_offset(settingsStore.startOfDay);
+    this.syncRoute(true);
     const today = moment(this.selectedDate);
     this.calendarYear = today.year();
     this.calendarMonth = today.month();
@@ -2356,6 +2643,34 @@ export default {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.chronio-period-toggle {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: inline-flex;
+  overflow: hidden;
+
+  button {
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    min-height: 30px;
+    min-width: 52px;
+    padding: 0 10px;
+  }
+
+  button + button {
+    border-left: 1px solid var(--border);
+  }
+
+  button.active {
+    background: rgba(75, 139, 255, 0.14);
+    color: var(--text);
+  }
 }
 
 .chronio-nav-btn {
@@ -2459,6 +2774,11 @@ export default {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+.chronio-body.period-week,
+.chronio-body.period-month {
+  grid-template-columns: 240px minmax(0, 1fr);
 }
 
 /* ── SIDEBAR ─────────────────────────────────────────────────────── */
