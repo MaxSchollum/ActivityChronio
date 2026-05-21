@@ -70,7 +70,7 @@ current_release = subprocess.run(
     stderr=subprocess.STDOUT,
     encoding="utf8",
 ).stdout.strip()
-print("bundling activitywatch version " + current_release)
+print("bundling chronio version " + current_release)
 
 # Get entitlements and codesign identity
 entitlements_file = Path(".") / "scripts" / "package" / "entitlements.plist"
@@ -211,15 +211,18 @@ if platform.system() == "Darwin":
         awa_coll,
         awi_coll,
         aw_notify_coll,
-        name="ActivityWatch.app",
+        name="Chronio.app",
         icon=icon,
-        bundle_identifier="net.activitywatch.ActivityWatch",
+        bundle_identifier="com.maxschollum.chronio",
         version=current_release.lstrip("v"),
         info_plist={
             "NSPrincipalClass": "NSApplication",
             "CFBundleExecutable": "MacOS/aw-qt",
             "CFBundleIconFile": "logo.icns",
+            "CFBundleName": "Chronio",
+            "CFBundleDisplayName": "Chronio",
             "NSAppleEventsUsageDescription": "Please grant access to use Apple Events",
+            "LSUIElement": True,
             # This could be set to a more specific version string (including the commit id, for example)
             "CFBundleVersion": current_release.lstrip("v"),
             # Replaced by the 'version' kwarg above

@@ -61,12 +61,14 @@ coll = COLLECT(exe,
                name='aw-qt')
 
 
-# Build a .app for macOS
-# This would probably be done best by also bundling aw-server, aw-watcher-afk and
-# aw-watcher-window in one single `.app`.
+# Build a .app for macOS.
+# The supported app bundle path is the repository-level aw.spec because it also
+# bundles aw-server and the watchers.
 #
 # NOTE: Untested, remove the False to test
 if False and platform.system() == "Darwin":
     app = BUNDLE(exe,
-                 name="ActivityWatch.app",
-                 icon=None)  # TODO: Should this be icon=icon?
+                 name="Chronio.app",
+                 icon=None,  # TODO: Should this be icon=icon?
+                 bundle_identifier="com.maxschollum.chronio",
+                 info_plist={"LSUIElement": True})
