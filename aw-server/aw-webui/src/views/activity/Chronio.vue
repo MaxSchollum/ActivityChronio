@@ -60,10 +60,20 @@ div.chronio-view
     //- ─── LEFT SIDEBAR ───────────────────────────────────────────────
     .chronio-sidebar
       nav.sidebar-nav
-        .sidebar-nav-item.active Activities
+        .sidebar-nav-item(:class="{ active: !showWeeklyReport }" @click="closeReport") Activities
         .sidebar-nav-item(@click="$router.push('/chronio/stats')") Stats
-        .sidebar-nav-item Reports
+        .sidebar-nav-item(:class="{ active: showWeeklyReport }" @click="openWeeklyReport") Reports
         .sidebar-nav-item(@click="$router.push('/chronio/settings')") Settings
+
+      .sidebar-export-actions
+        button.sidebar-export-btn(
+          :disabled="!exportRows.length"
+          @click="exportPeriod('csv')"
+        ) Export CSV
+        button.sidebar-export-btn(
+          :disabled="!exportRows.length"
+          @click="exportPeriod('json')"
+        ) Export JSON
 
       .sidebar-tree
         .sidebar-summary-row(
@@ -282,6 +292,15 @@ div.chronio-view
             span.search-result-dot(:style="{background: result.categoryColor}")
             span {{ result.categoryLabel }}
 
+    ChronioReport(
+      v-else-if="showWeeklyReport"
+      :rows="exportRows"
+      :start-date="periodStart"
+      :end-date="periodEndDate"
+      :label="periodDisplay"
+      @close="closeReport"
+    )
+
     ChronioWeek(
       v-else-if="selectedPeriod === 'week'"
       :days="weekDays"
@@ -481,6 +500,7 @@ div.chronio-view
 import moment from 'moment';
 import Fuse from 'fuse.js';
 import _ from 'lodash';
+import Papa from 'papaparse';
 import { useActivityStore } from '~/stores/activity';
 import { useBucketsStore } from '~/stores/buckets';
 import { useCategoryStore } from '~/stores/categories';
@@ -490,6 +510,7 @@ import { getColorFromString } from '~/util/color';
 import { getClient } from '~/util/awclient';
 import ChronioDay from './ChronioDay.vue';
 import ChronioMonth from './ChronioMonth.vue';
+import ChronioReport from './ChronioReport.vue';
 import ChronioWeek from './ChronioWeek.vue';
 
 // System processes that are never real user activity
@@ -594,6 +615,7 @@ export default {
   components: {
     ChronioDay,
     ChronioMonth,
+    ChronioReport,
     ChronioWeek,
   },
 
@@ -611,6 +633,7 @@ export default {
       searchLoadedRangeKey: '' as string,
       searchDebounceTimer: null as any,
       searchRequestId: 0 as number,
+      showWeeklyReport: false as boolean,
       showDatePicker: false as boolean,
       loading: true as boolean,
       selectedEvent: null as any,
@@ -716,6 +739,32 @@ export default {
       }
       if (this.selectedPeriod === 'month') return moment(this.selectedDate).format('MMMM YYYY');
       return this.dateDisplay;
+    },
+
+    periodEndDate(): string {
+      if (!this.periodStart) return '';
+      return moment(this.periodStart)
+        .add(1, this.selectedPeriod)
+        .subtract(1, 'day')
+        .format('YYYY-MM-DD');
+    },
+
+    exportRows(): any[] {
+      return [...(this.activeWindowEvents as any[])]
+        .sort((a: any, b: any) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf())
+        .map((event: any) => {
+          const category = this.classifyEventCategory(event);
+          const identity = this.eventIdentity(event);
+          return {
+            timestamp: moment(event.timestamp).toISOString(),
+            app: identity.app,
+            title: identity.title,
+            category: category.join(' > '),
+            durationSeconds: event.duration || 0,
+            productivityScore:
+              (this.categoryStore as any).get_category_score(category) || 0,
+          };
+        });
     },
 
     // AFK intervals for the day
@@ -2761,6 +2810,7 @@ export default {
     },
 
     setPeriod(period: 'day' | 'week' | 'month') {
+      this.showWeeklyReport = false;
       if (this.selectedPeriod === period) return;
       this.selectedPeriod = period;
       this.syncRoute();
@@ -2768,10 +2818,63 @@ export default {
     },
 
     selectDay(date: string) {
+      this.showWeeklyReport = false;
       this.selectedPeriod = 'day';
       this.selectedDate = date;
       this.syncRoute();
       this.refresh();
+    },
+
+    openWeeklyReport() {
+      this.selectedCatFilter = null;
+      this.showWeeklyReport = true;
+      if (this.selectedPeriod === 'week') return;
+      this.selectedPeriod = 'week';
+      this.syncRoute();
+      this.refresh();
+    },
+
+    closeReport() {
+      this.showWeeklyReport = false;
+    },
+
+    exportCsv(): string {
+      const columns = [
+        'timestamp',
+        'app',
+        'title',
+        'category',
+        'duration (seconds)',
+        'productivity score',
+      ];
+      const rows = (this.exportRows as any[]).map((row: any) => [
+        row.timestamp,
+        row.app,
+        row.title,
+        row.category,
+        row.durationSeconds,
+        row.productivityScore,
+      ]);
+      return Papa.unparse(rows, { columns });
+    },
+
+    exportPeriod(format: 'csv' | 'json') {
+      if (!(this.exportRows as any[]).length) return;
+      const filename =
+        'chronio-' + this.periodStart + '-to-' + this.periodEndDate + '.' + format;
+      const content =
+        format === 'csv'
+          ? this.exportCsv()
+          : JSON.stringify(this.exportRows, null, 2);
+      const type = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
+      const url = URL.createObjectURL(new Blob([content], { type }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
     },
 
     routePath(): string {
@@ -2894,6 +2997,9 @@ export default {
       const date = to.params.date;
       if (period && ['day', 'week', 'month'].includes(period) && period !== this.selectedPeriod) {
         this.selectedPeriod = period;
+      }
+      if (this.showWeeklyReport && this.selectedPeriod !== 'week') {
+        this.showWeeklyReport = false;
       }
       if (date && date !== this.selectedDate && moment(date, 'YYYY-MM-DD', true).isValid()) {
         this.selectedDate = date;
@@ -3151,6 +3257,26 @@ export default {
   grid-template-columns: 240px minmax(0, 1fr);
 }
 
+@media print {
+  .chronio-view {
+    background: #fff;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .chronio-topbar,
+  .chronio-sidebar {
+    display: none;
+  }
+
+  .chronio-body {
+    display: block;
+    min-height: auto;
+    overflow: visible;
+  }
+}
+
 /* ── SIDEBAR ─────────────────────────────────────────────────────── */
 .chronio-sidebar {
   border-right: 1px solid var(--border);
@@ -3173,6 +3299,36 @@ export default {
   border-radius: 0;
   &:hover { color: var(--text); background: rgba(255,255,255,0.04); }
   &.active { color: #4b8bff; background: rgba(75,139,255,0.08); font-weight: 500; }
+}
+
+.sidebar-export-actions {
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 10px 12px;
+}
+
+.sidebar-export-btn {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 7px;
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    border-color: var(--border-hover);
+    color: var(--text);
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.35;
+  }
 }
 
 .sidebar-tree {
