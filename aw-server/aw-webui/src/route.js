@@ -3,12 +3,14 @@ import VueRouter from 'vue-router';
 
 const Chronio = () => import('./views/activity/Chronio.vue');
 const ChronioSettings = () => import('./views/activity/ChronioSettings.vue');
+const ChronioTrends = () => import('./views/activity/ChronioTrends.vue');
 
 Vue.use(VueRouter);
 
 const router = new VueRouter({
   routes: [
     { path: '/chronio/settings', component: ChronioSettings, meta: { fullContainer: true, noShell: true } },
+    { path: '/chronio/stats', component: ChronioTrends, meta: { fullContainer: true, noShell: true } },
     {
       path: '/chronio/:period(day|week|month)?/:date?',
       component: Chronio,
@@ -21,8 +23,8 @@ const router = new VueRouter({
     { path: '/buckets', redirect: '/chronio' },
     { path: '/buckets/:id', redirect: '/chronio' },
     { path: '/timeline', redirect: '/chronio' },
-    { path: '/trends', redirect: '/chronio' },
-    { path: '/trends/:host', redirect: '/chronio' },
+    { path: '/trends', redirect: '/chronio/stats' },
+    { path: '/trends/:host', redirect: '/chronio/stats' },
     { path: '/report', redirect: '/chronio' },
     { path: '/query', redirect: '/chronio' },
     { path: '/alerts', redirect: '/chronio' },

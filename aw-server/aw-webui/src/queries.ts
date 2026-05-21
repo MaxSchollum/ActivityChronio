@@ -104,7 +104,10 @@ function isMultiParams(object: any): object is MultiQueryParams {
 export function canonicalEvents(params: DesktopQueryParams | AndroidQueryParams): string {
   // Needs escaping for regex patterns like '\w' to work (JSON.stringify adds extra unnecessary escaping)
   const categories_str = params.categories
-    ? JSON.stringify(params.categories).replace(/\\\\/g, '\\')
+    ? JSON.stringify(params.categories)
+        .replace(/\\\\/g, '\\')
+        // Keep regex text intact when querystr_to_array splits query statements below.
+        .replace(/;/g, '\\u003b')
     : '';
   const always_active_pattern_str = isDesktopParams(params)
     ? params.always_active_pattern
