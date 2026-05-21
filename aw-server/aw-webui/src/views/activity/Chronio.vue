@@ -35,8 +35,21 @@ div.chronio-view
         span.value {{ goalSummary.hit }}/{{ goalSummary.total }}
       .chronio-afk-badge(:class="afkStatus" :title="afkStatus === 'active' ? 'AFK idle detection active' : 'No AFK data — idle time not filtered'")
         | {{ afkStatus === 'active' ? 'AFK ✓' : 'AFK ⚠' }}
-      .chronio-search
-        input(ref="searchInput" type="text" placeholder="Search…" v-model="searchQuery")
+      .chronio-search(:class="{active: isSearchActive}")
+        input(
+          ref="searchInput"
+          type="text"
+          placeholder="Search activity..."
+          v-model="searchQuery"
+          @keydown.escape.prevent="clearAdvancedSearch"
+        )
+        button.search-clear(
+          v-if="isSearchActive"
+          type="button"
+          title="Clear search"
+          aria-label="Clear search"
+          @click="clearAdvancedSearch"
+        ) ×
       button.chronio-nav-btn(@click="$router.push('/chronio/settings')" title="Settings") Settings
 
   div.chronio-loading(v-if="loading")
@@ -216,8 +229,61 @@ div.chronio-view
             label Custom:
             input(type="color" :value="colorPickerRow ? colorPickerRow.color : '#ffffff'" @input="applyColor($event.target.value)")
 
+    .chronio-center.search-center(v-if="isSearchActive")
+      .center-header.search-header
+        .center-title
+          | Search results:&nbsp;
+          strong {{ searchResultCountLabel }}
+        button.search-close(type="button" @click="clearAdvancedSearch") Clear
+
+      .search-controls
+        label.search-control
+          span From
+          input(
+            type="date"
+            v-model="searchStartDate"
+            :max="searchEndDate"
+          )
+        label.search-control
+          span To
+          input(
+            type="date"
+            v-model="searchEndDate"
+            :min="searchStartDate"
+          )
+        label.search-control.search-control-category
+          span Category
+          select(v-model="searchCategory")
+            option(value="") All categories
+            option(
+              v-for="option in searchCategoryOptions"
+              :key="option.value"
+              :value="option.value"
+            ) {{ option.label }}
+      .search-range-note Search covers up to 30 days.
+
+      .search-state(v-if="searchLoading") Loading matching activity...
+      .search-state.search-error(v-else-if="searchError") {{ searchError }}
+      .search-state(v-else-if="!searchResults.length") No matching activity in this range.
+      .search-results-scroll(v-else)
+        button.search-result-row(
+          v-for="result in searchResults"
+          :key="result.key"
+          type="button"
+          @click="openAdvancedSearchResult(result)"
+        )
+          .search-result-when
+            span.search-result-day {{ result.dayLabel }}
+            span.search-result-time {{ result.timeLabel }}
+          .search-result-main
+            .search-result-app {{ result.app }}
+            .search-result-title(:title="result.title") {{ result.title }}
+          .search-result-category(:title="result.categoryLabel")
+            span.search-result-dot(:style="{background: result.categoryColor}")
+            span {{ result.categoryLabel }}
+
     ChronioWeek(
-      v-if="selectedPeriod === 'week'"
+      v-else-if="selectedPeriod === 'week'"
       :days="weekDays"
       :label="periodDisplay"
       :score-label="scoreLabel(activeWindowEvents)"
@@ -413,6 +479,7 @@ div.chronio-view
 
 <script lang="ts">
 import moment from 'moment';
+import Fuse from 'fuse.js';
 import _ from 'lodash';
 import { useActivityStore } from '~/stores/activity';
 import { useBucketsStore } from '~/stores/buckets';
@@ -453,6 +520,8 @@ const GRADIENTS: string[] = [
 
 const HOUR_PX = 56; // pixels per hour on the timeline canvas
 const MAX_MERGE_GAP_MS = 15 * 60 * 1000; // don't merge same-app blocks separated by >15 min
+const ADVANCED_SEARCH_DAYS = 30;
+const ADVANCED_SEARCH_LIMIT = 300;
 
 // Browser names to strip from window titles
 const BROWSER_SUFFIXES = [
@@ -490,7 +559,7 @@ const SHORTCUT_REFERENCE_ROWS = [
   { keys: '↑ / ↓', action: 'Move through activity rows' },
   { keys: 'Space', action: 'Expand or collapse selected row' },
   { keys: '1–9', action: 'Assign selection to sidebar category' },
-  { keys: '/', action: 'Focus search' },
+  { keys: '/ / ⌘F', action: 'Focus search' },
   { keys: 'Escape', action: 'Clear filters and selection' },
   { keys: '?', action: 'Show this reference' },
 ];
@@ -533,6 +602,15 @@ export default {
       selectedDate: '' as string,
       selectedPeriod: 'day' as 'day' | 'week' | 'month',
       searchQuery: '' as string,
+      searchStartDate: '' as string,
+      searchEndDate: '' as string,
+      searchCategory: '' as string,
+      searchSourceRows: [] as any[],
+      searchLoading: false as boolean,
+      searchError: '' as string,
+      searchLoadedRangeKey: '' as string,
+      searchDebounceTimer: null as any,
+      searchRequestId: 0 as number,
       showDatePicker: false as boolean,
       loading: true as boolean,
       selectedEvent: null as any,
@@ -587,6 +665,7 @@ export default {
       calendarDots: {} as Record<string, boolean>,
       // keyboard handler ref (#44)
       keyHandler: null as any,
+      pendingTimelineScrollMs: null as number | null,
     };
   },
 
@@ -641,43 +720,12 @@ export default {
 
     // AFK intervals for the day
     notAfkIntervals(): { start: number; end: number }[] {
-      return (this.afkEvents || [])
-        .filter((e: any) => e.data?.status === 'not-afk' && e.duration > 0)
-        .map((e: any) => ({
-          start: moment(e.timestamp).valueOf(),
-          end: moment(e.timestamp).add(e.duration, 'seconds').valueOf(),
-        }));
+      return this.notAfkIntervalsFor(this.afkEvents);
     },
 
     // Full-day AFK-filtered window events (no segment restriction)
     activeWindowEvents(): any[] {
-      const events = (this.windowEvents || []).filter((e: any) => !this.shouldHideFromChronio(e));
-      const intervals = this.notAfkIntervals;
-      // Fail-open: if no AFK data available, show all window events unfiltered
-      if (intervals.length === 0) {
-        return events.filter((e: any) => !SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app));
-      }
-      const segments: any[] = [];
-      for (const e of events) {
-        if (SYSTEM_PROCESS_BLOCKLIST.has(e.data?.app)) continue;
-        const eStart = moment(e.timestamp).valueOf();
-        const eEnd = eStart + e.duration * 1000;
-        const eventDur = eEnd - eStart;
-        if (eventDur <= 0) continue;
-
-        for (const iv of intervals) {
-          const start = Math.max(eStart, iv.start);
-          const end = Math.min(eEnd, iv.end);
-          const durationMs = end - start;
-          if (durationMs <= 1000) continue;
-          segments.push({
-            ...e,
-            timestamp: moment(start).toISOString(),
-            duration: durationMs / 1000,
-          });
-        }
-      }
-      return segments;
+      return this.activeEventsFor(this.windowEvents, this.afkEvents);
     },
 
     afkStatus(): 'active' | 'no-data' {
@@ -734,6 +782,46 @@ export default {
         });
       }
       return events;
+    },
+
+    isSearchActive(): boolean {
+      return !!this.searchQuery.trim();
+    },
+
+    searchCategoryOptions(): { label: string; value: string }[] {
+      const options = (this.categoryStore as any).all_categories
+        .map((category: string[]) => ({
+          label: category.join(' > '),
+          value: category.join('>'),
+        }))
+        .filter((option: any) => option.value !== 'Uncategorized');
+      return [{ label: 'Uncategorized', value: '__unassigned__' }].concat(options);
+    },
+
+    searchResults(): any[] {
+      if (!this.isSearchActive) return [];
+      let rows = this.searchSourceRows as any[];
+      if (this.searchCategory === '__unassigned__') {
+        rows = rows.filter((row: any) => row.category[0] === 'Uncategorized');
+      } else if (this.searchCategory) {
+        const category = this.searchCategory;
+        rows = rows.filter((row: any) =>
+          row.categoryKey === category || row.categoryKey.startsWith(category + '>')
+        );
+      }
+      const fuse = new Fuse(rows, {
+        ignoreLocation: true,
+        keys: ['app', 'title', 'matchText', 'categoryLabel'],
+        threshold: 0.34,
+      });
+      return fuse.search(this.searchQuery.trim(), { limit: ADVANCED_SEARCH_LIMIT })
+        .map((result: any) => result.item);
+    },
+
+    searchResultCountLabel(): string {
+      if (this.searchLoading) return 'Searching';
+      const count = this.searchResults.length;
+      return count === 1 ? '1 match' : `${count} matches`;
     },
 
     centerTitle(): string {
@@ -1194,18 +1282,7 @@ export default {
     timeline(): any[] {
       const events: any[] = this.scopedActiveWindowEvents;
       if (!events.length) return [];
-
-      // Apply search filter to timeline too
-      let filtered = events;
-      if (this.searchQuery) {
-        const q = this.searchQuery.toLowerCase();
-        filtered = events.filter((e: any) => {
-          return (e.data?.app || '').toLowerCase().includes(q) ||
-            (e.data?.title || '').toLowerCase().includes(q);
-        });
-      }
-
-      const sorted = [...filtered].sort(
+      const sorted = [...events].sort(
         (a: any, b: any) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf()
       );
 
@@ -1397,6 +1474,185 @@ export default {
     // Expose module-level helpers to the template
     formatDuration(seconds: number): string {
       return formatDuration(seconds);
+    },
+
+    notAfkIntervalsFor(afkEvents: any[]): { start: number; end: number }[] {
+      return (afkEvents || [])
+        .filter((event: any) => event.data?.status === 'not-afk' && event.duration > 0)
+        .map((event: any) => ({
+          start: moment(event.timestamp).valueOf(),
+          end: moment(event.timestamp).add(event.duration, 'seconds').valueOf(),
+        }));
+    },
+
+    activeEventsFor(windowEvents: any[], afkEvents: any[]): any[] {
+      const events = (windowEvents || []).filter((event: any) => !this.shouldHideFromChronio(event));
+      const intervals = this.notAfkIntervalsFor(afkEvents);
+      // Fail-open: if no AFK data is available for this day, preserve tracked window events.
+      if (intervals.length === 0) {
+        return events.filter((event: any) => !SYSTEM_PROCESS_BLOCKLIST.has(event.data?.app));
+      }
+
+      const segments: any[] = [];
+      for (const event of events) {
+        if (SYSTEM_PROCESS_BLOCKLIST.has(event.data?.app)) continue;
+        const eventStart = moment(event.timestamp).valueOf();
+        const eventEnd = eventStart + event.duration * 1000;
+        if (eventEnd <= eventStart) continue;
+
+        for (const interval of intervals) {
+          const start = Math.max(eventStart, interval.start);
+          const end = Math.min(eventEnd, interval.end);
+          const durationMs = end - start;
+          if (durationMs <= 1000) continue;
+          segments.push({
+            ...event,
+            timestamp: moment(start).toISOString(),
+            duration: durationMs / 1000,
+          });
+        }
+      }
+      return segments;
+    },
+
+    resetAdvancedSearchRange() {
+      const end = moment(this.selectedDate || get_today_with_offset(this.settingsStore.startOfDay));
+      this.searchEndDate = end.format('YYYY-MM-DD');
+      this.searchStartDate = end.clone().subtract(ADVANCED_SEARCH_DAYS - 1, 'days').format('YYYY-MM-DD');
+    },
+
+    normalizedAdvancedSearchRange(): { start: any; end: any } {
+      let end = moment(this.searchEndDate, 'YYYY-MM-DD', true);
+      let start = moment(this.searchStartDate, 'YYYY-MM-DD', true);
+      if (!end.isValid() || !start.isValid()) {
+        this.resetAdvancedSearchRange();
+        end = moment(this.searchEndDate, 'YYYY-MM-DD', true);
+        start = moment(this.searchStartDate, 'YYYY-MM-DD', true);
+      }
+      if (start.isAfter(end, 'day')) start = end.clone();
+
+      const earliestAllowed = end.clone().subtract(ADVANCED_SEARCH_DAYS - 1, 'days');
+      if (start.isBefore(earliestAllowed, 'day')) start = earliestAllowed;
+
+      const normalizedStart = start.format('YYYY-MM-DD');
+      const normalizedEnd = end.format('YYYY-MM-DD');
+      if (this.searchStartDate !== normalizedStart) this.searchStartDate = normalizedStart;
+      if (this.searchEndDate !== normalizedEnd) this.searchEndDate = normalizedEnd;
+      return { start: start.startOf('day'), end: end.startOf('day') };
+    },
+
+    queueAdvancedSearch() {
+      if (!this.isSearchActive) return;
+      if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
+      if (!this.searchLoadedRangeKey) this.searchLoading = true;
+      this.searchDebounceTimer = setTimeout(() => {
+        this.searchDebounceTimer = null;
+        this.loadAdvancedSearch();
+      }, 220);
+    },
+
+    async loadAdvancedSearch() {
+      if (!this.isSearchActive) return;
+      const range = this.normalizedAdvancedSearchRange();
+      const rangeKey = range.start.format('YYYY-MM-DD') + '/' + range.end.format('YYYY-MM-DD');
+      if (this.searchLoadedRangeKey === rangeKey) {
+        this.searchLoading = false;
+        return;
+      }
+
+      const requestId = ++this.searchRequestId;
+      this.searchLoading = true;
+      this.searchError = '';
+
+      const allHosts: string[] = (this.bucketsStore.hosts as string[])
+        .filter((host: string) => host && host !== 'unknown' && !/^\d+\.\d+\.\d+\.\d+$/.test(host));
+      const windowBuckets: string[] = allHosts.flatMap((host: string) => this.bucketsStore.bucketsWindow(host));
+      const afkBuckets: string[] = allHosts.flatMap((host: string) => this.bucketsStore.bucketsAFK(host));
+      if (!windowBuckets.length) {
+        this.searchSourceRows = [];
+        this.searchError = 'No window activity buckets are available for search.';
+        this.searchLoading = false;
+        return;
+      }
+
+      const days: any[] = [];
+      const cursor = range.start.clone();
+      while (cursor.isSameOrBefore(range.end, 'day')) {
+        days.push(cursor.clone());
+        cursor.add(1, 'day');
+      }
+
+      try {
+        const rowsByDay = await Promise.all(days.map(async (day: any) => {
+          const params = {
+            start: day.clone().startOf('day').toDate(),
+            end: day.clone().add(1, 'day').startOf('day').toDate(),
+            limit: -1,
+          };
+          const [windowEventArrays, afkEventArrays] = await Promise.all([
+            Promise.all(windowBuckets.map((bucket: string) =>
+              getClient().getEvents(bucket, params).catch(() => [])
+            )),
+            Promise.all(afkBuckets.map((bucket: string) =>
+              getClient().getEvents(bucket, params).catch(() => [])
+            )),
+          ]);
+          return this.activeEventsFor(windowEventArrays.flat(), afkEventArrays.flat())
+            .map((event: any) => this.advancedSearchRow(event));
+        }));
+        if (requestId !== this.searchRequestId) return;
+        this.searchSourceRows = rowsByDay.flat()
+          .sort((a: any, b: any) => b.startMs - a.startMs);
+        this.searchLoadedRangeKey = rangeKey;
+      } catch (error) {
+        if (requestId !== this.searchRequestId) return;
+        this.searchSourceRows = [];
+        this.searchError = 'Search could not load activity for this date range.';
+      } finally {
+        if (requestId === this.searchRequestId) this.searchLoading = false;
+      }
+    },
+
+    advancedSearchRow(event: any): any {
+      const identity = this.eventIdentity(event);
+      const category = this.classifyEventCategory(event);
+      const start = moment(event.timestamp);
+      const end = start.clone().add(event.duration || 0, 'seconds');
+      const categoryLabel = category.join(' > ');
+      return {
+        app: identity.app,
+        category,
+        categoryColor: (this.categoryStore as any).get_category_color(category),
+        categoryKey: category.join('>'),
+        categoryLabel,
+        date: start.format('YYYY-MM-DD'),
+        dayLabel: start.format('ddd, MMM D'),
+        event,
+        key: [event.id || '', start.valueOf(), identity.app, identity.title].join('/'),
+        matchText: [identity.matchText, categoryLabel].filter(Boolean).join('\n'),
+        startMs: start.valueOf(),
+        timeLabel: formatHHMM(start.toISOString()) + ' - ' + formatHHMM(end.toISOString()),
+        title: identity.title,
+      };
+    },
+
+    clearAdvancedSearch() {
+      if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
+      this.searchDebounceTimer = null;
+      this.searchRequestId++;
+      this.searchQuery = '';
+      this.searchCategory = '';
+      this.searchError = '';
+      this.searchLoading = false;
+    },
+
+    openAdvancedSearchResult(result: any) {
+      const alreadyOnDay = this.selectedPeriod === 'day' && this.selectedDate === result.date;
+      this.pendingTimelineScrollMs = result.startMs;
+      this.selectedPeriod = 'day';
+      this.selectedDate = result.date;
+      this.syncRoute();
+      if (alreadyOnDay) this.$nextTick(() => this.scrollTimeline());
     },
 
     periodStartFor(date: any, period: 'day' | 'week' | 'month'): any {
@@ -2337,7 +2593,7 @@ export default {
     },
 
     clearShortcutFiltersAndSelection() {
-      this.searchQuery = '';
+      this.clearAdvancedSearch();
       this.selectedCatFilter = null;
       this.clearSelection();
     },
@@ -2362,6 +2618,11 @@ export default {
 
     // ─── KEYBOARD NAVIGATION (#44/#51) ───────────────────────────
     onGlobalKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        this.focusSearch();
+        return;
+      }
       if (this.isShortcutEditingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
 
       if (this.showShortcutReference) {
@@ -2584,7 +2845,13 @@ export default {
 
     scrollTimeline() {
       const timeline = this.$refs.timeline as any;
-      if (timeline) timeline.scrollToNow();
+      if (!timeline) return;
+      if (this.pendingTimelineScrollMs !== null) {
+        timeline.scrollToTimestamp(this.pendingTimelineScrollMs);
+        this.pendingTimelineScrollMs = null;
+        return;
+      }
+      timeline.scrollToNow();
     },
   },
 
@@ -2603,6 +2870,24 @@ export default {
           }
         });
       }
+    },
+    searchQuery(query: string) {
+      if (query.trim()) {
+        if (!this.searchStartDate || !this.searchEndDate) this.resetAdvancedSearchRange();
+        this.queueAdvancedSearch();
+      } else {
+        this.searchRequestId++;
+        this.searchLoading = false;
+        this.searchError = '';
+      }
+    },
+    searchStartDate() {
+      this.searchLoadedRangeKey = '';
+      if (this.isSearchActive) this.queueAdvancedSearch();
+    },
+    searchEndDate() {
+      this.searchLoadedRangeKey = '';
+      if (this.isSearchActive) this.queueAdvancedSearch();
     },
     $route(to: any) {
       const period = to.params.period;
@@ -2629,6 +2914,7 @@ export default {
       routeDate && moment(routeDate, 'YYYY-MM-DD', true).isValid()
         ? routeDate
         : get_today_with_offset(settingsStore.startOfDay);
+    this.resetAdvancedSearchRange();
     this.syncRoute(true);
     const today = moment(this.selectedDate);
     this.calendarYear = today.year();
@@ -2650,6 +2936,7 @@ export default {
 
   beforeDestroy() {
     this.stopLiveRefresh();
+    if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
   },
 };
@@ -2812,10 +3099,12 @@ export default {
 .chronio-search {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   padding: 5px 10px;
   border-radius: 10px;
   background: var(--panel);
   border: 1px solid var(--border);
+  &.active { border-color: rgba(75,139,255,0.45); }
   input {
     background: transparent;
     border: 0;
@@ -2825,6 +3114,17 @@ export default {
     width: 160px;
     &::placeholder { color: var(--muted); }
   }
+}
+
+.search-clear {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  &:hover { color: var(--text); }
 }
 
 /* ── LOADING ─────────────────────────────────────────────────────── */
@@ -3445,6 +3745,137 @@ export default {
   font-size: 14px;
   color: var(--muted);
   strong { color: var(--text); }
+}
+
+.search-close {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 10px;
+  &:hover { border-color: var(--border-hover); color: var(--text); }
+}
+
+.search-controls {
+  align-items: flex-end;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 132px 132px minmax(160px, 1fr);
+  padding: 12px 16px 8px;
+}
+
+.search-control {
+  color: var(--muted);
+  display: grid;
+  font-size: 11px;
+  gap: 4px;
+  min-width: 0;
+  span { line-height: 1; }
+  input,
+  select {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 12px;
+    height: 30px;
+    min-width: 0;
+    padding: 4px 7px;
+    width: 100%;
+  }
+}
+
+.search-range-note {
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 6px 16px;
+}
+
+.search-state {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 22px 16px;
+}
+
+.search-error {
+  color: #ff8a8a;
+}
+
+.search-results-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.search-result-row {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  font-size: 12px;
+  gap: 12px;
+  grid-template-columns: 138px minmax(0, 1fr) minmax(120px, 172px);
+  padding: 9px 16px;
+  text-align: left;
+  width: 100%;
+  &:hover,
+  &:focus-visible { background: rgba(75,139,255,0.1); outline: none; }
+}
+
+.search-result-when,
+.search-result-main,
+.search-result-category {
+  min-width: 0;
+}
+
+.search-result-day,
+.search-result-time {
+  display: block;
+  white-space: nowrap;
+}
+
+.search-result-time,
+.search-result-title {
+  color: var(--muted);
+}
+
+.search-result-app,
+.search-result-title,
+.search-result-category span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-result-app {
+  font-weight: 600;
+}
+
+.search-result-title {
+  margin-top: 2px;
+}
+
+.search-result-category {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  gap: 6px;
+}
+
+.search-result-dot {
+  border-radius: 50%;
+  flex: 0 0 8px;
+  height: 8px;
+  width: 8px;
 }
 
 .view-toggle {
