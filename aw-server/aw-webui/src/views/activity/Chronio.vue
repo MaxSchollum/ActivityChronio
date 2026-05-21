@@ -19,9 +19,13 @@ div.chronio-view
             @blur="showDatePicker = false"
           )
         button.chronio-nav-btn(@click="nextDay" :disabled="isToday") &rarr;
+        button.chronio-today-btn(v-if="!isToday" @click="goToToday") Today
       .chronio-metric
         span.label Tracked:
         span.value {{ totalTrackedTime }}
+      .chronio-metric(v-if="productivityScore !== '—'")
+        span.label Productivity:
+        span.value.prod-score(:class="productivityScoreClass") {{ productivityScore }}%
       .chronio-afk-badge(:class="afkStatus" :title="afkStatus === 'active' ? 'AFK idle detection active' : 'No AFK data — idle time not filtered'")
         | {{ afkStatus === 'active' ? 'AFK ✓' : 'AFK ⚠' }}
       .chronio-search
@@ -50,13 +54,13 @@ div.chronio-view
           @click="selectedCatFilter = '__unassigned__'"
           :class="{active: selectedCatFilter === '__unassigned__'}"
         )
-          span.sr-name Unassigned
+          span.sr-name Uncategorized
           span.sr-time {{ unassignedTime }}
 
         .sidebar-divider
 
         .sidebar-section-header
-          span Projects
+          span Categories
           button.sidebar-add-btn(@click.stop="createTopCategory") +
 
         template(v-for="row in sidebarFlatTree" :key="row.key")
@@ -321,13 +325,23 @@ div.chronio-view
           .tl-block(
             v-for="block in timelineCanvas.blocks"
             :key="'b-' + block.label + block.range"
-            :style="{background: block.color, top: block.top + 'px', height: block.heightPx + 'px'}"
+            :style="{background: block.color, top: block.top + 'px', height: block.heightPx + 'px', opacity: blockOpacity(block)}"
             :title="blockTooltip(block)"
             @click="onTimelineBlockClick(block)"
           )
             .tl-block-inner(v-if="block.heightPx > 20")
               .tl-title {{ block.label }}
               .tl-time-range(v-if="block.heightPx > 38") {{ block.range }}
+
+  //- ── TOAST NOTIFICATIONS (#78) ───────────────────────────────────────
+  .chronio-toasts
+    .chronio-toast(
+      v-for="t in toasts"
+      :key="t.id"
+    )
+      span.toast-msg {{ t.message }}
+      button.toast-undo(v-if="t.undo" @click="undoToast(t)") Undo
+      button.toast-close(@click="dismissToast(t)") ×
 
   //- ── ONBOARDING MODAL (#12) ──────────────────────────────────────────
   .onboarding-overlay(v-if="showOnboarding" @click.self="dismissOnboarding")
@@ -365,7 +379,12 @@ import { getColorFromString } from '~/util/color';
 import { getClient } from '~/util/awclient';
 
 // System processes that are never real user activity
-const SYSTEM_PROCESS_BLOCKLIST = new Set(['loginwindow', 'ScreenSaverEngine']);
+const SYSTEM_PROCESS_BLOCKLIST = new Set([
+  'loginwindow', 'ScreenSaverEngine',
+  'SecurityAgent', 'UserNotificationCenter', 'Notification Center',
+  'coreauthd', 'universalAccessAuthWarn', 'TokenEater',
+  'WidgetKit Simulator', 'Developer',
+]);
 
 // Color swatches for the color picker (#7)
 const COLOR_SWATCHES = [
@@ -482,6 +501,9 @@ export default {
       refreshTimer: null as any,
       // #35: guard to skip silent refresh if a full refresh is already in flight
       isRefreshing: false as boolean,
+      // #78: toast notifications for drag-to-categorize
+      toasts: [] as { id: number; message: string; undo: (() => void) | null; timer: any }[],
+      nextToastId: 0 as number,
       // Mini calendar (#52)
       calendarYear: 0 as number,
       calendarMonth: 0 as number,   // 0-based (moment month)
@@ -628,6 +650,29 @@ export default {
         (sum: number, e: any) => sum + (e.duration || 0), 0
       );
       return formatDuration(total);
+    },
+
+    /* #4: weighted productivity score — sum(dur * score) / (total_dur * 10) * 100 */
+    productivityScore(): number | '—' {
+      const total = (this.activeWindowEvents as any[]).reduce(
+        (s: number, e: any) => s + (e.duration || 0), 0
+      );
+      if (total === 0) return '—';
+      const catStore = this.categoryStore as any;
+      let weighted = 0;
+      for (const cat of this.activitiesTree as any[]) {
+        const score: number = catStore.get_category_score(cat.category) || 0;
+        weighted += cat.duration * score;
+      }
+      return Math.round(Math.max(0, Math.min(100, (weighted / (total * 10)) * 100)));
+    },
+
+    productivityScoreClass(): string {
+      const s = this.productivityScore;
+      if (s === '—') return '';
+      if ((s as number) >= 70) return 'prod-green';
+      if ((s as number) >= 40) return 'prod-yellow';
+      return 'prod-red';
     },
 
     // ─── ACTIVITIES TREE ─────────────────────────────────────────────
@@ -912,6 +957,17 @@ export default {
       return map;
     },
 
+    // Map each app to its category key (for timeline dim filter)
+    appCategoryKeys(): Record<string, string> {
+      const map: Record<string, string> = {};
+      for (const cat of this.activitiesTree as any[]) {
+        for (const app of cat.apps) {
+          if (!map[app.app]) map[app.app] = cat.catKey;
+        }
+      }
+      return map;
+    },
+
     // Timeline: merge consecutive same-app events, full day
     timeline(): any[] {
       const events: any[] = this.scopedActiveWindowEvents;
@@ -995,6 +1051,7 @@ export default {
             : gradientForApp(b.app, appIndexMap[b.app]);
           return {
             label: b.app,
+            catKey: this.appCategoryKeys[b.app] || 'Uncategorized',
             range: formatHHMM(b.start.toISOString()) + ' – ' + formatHHMM(b.end.toISOString()),
             color,
             colorTitle: 'Category: ' + (b.category || ['Uncategorized']).join(' > '),
@@ -1122,6 +1179,17 @@ export default {
 
     blockTooltip(block: any): string {
       return block.label + '\n' + block.range + ' - ' + formatDuration((block.endMs - block.startMs) / 1000);
+    },
+
+    // #77: full opacity for matching blocks, dim non-matching when a filter is active
+    blockOpacity(block: any): number {
+      const f = this.selectedCatFilter;
+      if (!f) return 1;
+      if (f === '__unassigned__') {
+        return block.catKey === 'Uncategorized' ? 1 : 0.15;
+      }
+      const matches = block.catKey === f || block.catKey.startsWith(f + '>');
+      return matches ? 1 : 0.15;
     },
     formatHHMM(ts: any): string {
       return formatHHMM(ts);
@@ -1541,6 +1609,10 @@ export default {
         items = Array.isArray(parsed) ? parsed : [parsed];
       } catch { return; }
 
+      // Snapshot rule state before mutation so we can undo
+      const catId = cat.id;
+      const prevRule = JSON.parse(JSON.stringify(cat.rule));
+
       for (const payload of items) {
         const rule = payload.type === 'app'
           ? { type: 'app', app: payload.app }
@@ -1554,6 +1626,40 @@ export default {
       }
       catStore.save();
       this.clearSelection();
+
+      // #78: toast with undo
+      const label = items.length === 1
+        ? (items[0].title || items[0].app)
+        : `${items.length} items`;
+      this.showToast(
+        `"${label}" → ${row.label} — rule saved`,
+        () => {
+          const c = (this.categoryStore as any).classes.find((x: any) => x.id === catId);
+          if (c) {
+            c.rule.type = prevRule.type;
+            c.rule.regex = prevRule.regex;
+            (this.categoryStore as any).save();
+          }
+        },
+      );
+    },
+
+    // ─── TOAST HELPERS (#78) ─────────────────────────────────────────
+    showToast(message: string, undo: (() => void) | null = null) {
+      const id = ++this.nextToastId;
+      const timer = setTimeout(() => this.dismissToastById(id), 4000);
+      this.toasts.push({ id, message, undo, timer });
+    },
+    dismissToast(t: any) {
+      clearTimeout(t.timer);
+      this.dismissToastById(t.id);
+    },
+    dismissToastById(id: number) {
+      this.toasts = this.toasts.filter((t: any) => t.id !== id);
+    },
+    undoToast(t: any) {
+      if (t.undo) t.undo();
+      this.dismissToast(t);
     },
 
     // ─── SIDEBAR DRAG-TO-REPARENT (#32) ──────────────────────────
@@ -2842,6 +2948,76 @@ export default {
 .act-row--app .act-expand-spacer {
   width: 12px;
   flex-shrink: 0;
+}
+
+/* ── TODAY BUTTON (#74) ─────────────────────────────────────────── */
+.chronio-today-btn {
+  background: rgba(75,139,255,0.15);
+  border: 1px solid rgba(75,139,255,0.3);
+  border-radius: 8px;
+  color: #7db0ff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+  &:hover { background: rgba(75,139,255,0.25); }
+}
+
+/* ── PRODUCTIVITY SCORE (#4) ─────────────────────────────────────── */
+.prod-score {
+  &.prod-green { color: #1db954; }
+  &.prod-yellow { color: #f59e0b; }
+  &.prod-red { color: #ef4444; }
+}
+
+/* ── TOAST NOTIFICATIONS (#78) ───────────────────────────────────── */
+.chronio-toasts {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9999;
+  pointer-events: none;
+}
+.chronio-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #1e2330;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 13px;
+  color: var(--text);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+.toast-msg { flex: 1; }
+.toast-undo {
+  background: rgba(75,139,255,0.15);
+  border: 1px solid rgba(75,139,255,0.3);
+  border-radius: 6px;
+  color: #7db0ff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  &:hover { background: rgba(75,139,255,0.25); }
+}
+.toast-close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  &:hover { color: var(--text); }
 }
 
 /* ── SCROLLBAR STYLING ───────────────────────────────────────────── */
