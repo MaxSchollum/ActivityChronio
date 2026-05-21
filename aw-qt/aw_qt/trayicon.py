@@ -127,6 +127,10 @@ def _fetch_json(url: str, timeout_s: float = 2.0) -> Optional[Dict[str, Any]]:
 
 
 class TrayIcon(QSystemTrayIcon):
+    # Emitted from the background update-check thread; connected to
+    # _on_update_result on the main thread.  Qt signals are thread-safe.
+    _update_available_signal = QtCore.pyqtSignal(str)
+
     def __init__(
         self,
         manager: Manager,
@@ -155,6 +159,7 @@ class TrayIcon(QSystemTrayIcon):
         self._icon_tracking = self._make_status_icon(icon, True)
         self._icon_idle = self._make_status_icon(icon, False)
 
+        self._update_available_signal.connect(self._on_update_result)
         self._build_rootmenu()
 
         self._tracking_timer = QtCore.QTimer(self._parent)
@@ -436,13 +441,9 @@ class TrayIcon(QSystemTrayIcon):
             current = "0.0.0"
 
         def _on_result(latest_tag: Optional[str]) -> None:
-            # Callback arrives from a worker thread — marshal to Qt main thread
-            QtCore.QMetaObject.invokeMethod(
-                self._parent,
-                "_chronio_update_result",
-                QtCore.Qt.ConnectionType.QueuedConnection,
-                QtCore.Q_ARG(str, latest_tag or ""),
-            )
+            # Emit the signal from the worker thread; Qt delivers it on the
+            # main thread via the QueuedConnection wired in __init__.
+            self._update_available_signal.emit(latest_tag or "")
 
         # Sparkle handles its own polling; only use the Python checker as a
         # lightweight fallback for the menu badge.

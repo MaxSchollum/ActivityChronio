@@ -95,14 +95,19 @@ def init_sparkle() -> bool:
         return False
 
 
-def check_for_updates_now() -> None:
+def check_for_updates_now() -> bool:
     """
     Trigger an immediate user-facing update check (equivalent to
-    "Check for Updates…" in a menu bar app).  No-op if Sparkle was not
-    initialised.
+    "Check for Updates…" in a menu bar app).
+
+    Returns True if Sparkle is active and the check was triggered,
+    False if Sparkle was not initialised (caller should fall back to
+    opening the releases page in the browser).
     """
-    if _updater_controller is not None:
-        try:
-            _updater_controller.checkForUpdates_(None)  # type: ignore[attr-defined]
-        except Exception:
-            pass
+    if _updater_controller is None:
+        return False
+    try:
+        _updater_controller.checkForUpdates_(None)  # type: ignore[attr-defined]
+        return True
+    except Exception:
+        return False
