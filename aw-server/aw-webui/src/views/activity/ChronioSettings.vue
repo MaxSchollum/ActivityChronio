@@ -186,11 +186,9 @@ div.chronio-settings-view
       section.settings-section(ref="data" id="data")
         .section-heading
           h2 Data
-          p Chronio keeps activity data local. Day, week, month, CSV, and JSON exports are exposed from the reporting workflow.
+          p Chronio keeps activity data local. Export the open review period from Activities.
         .button-row
-          button.settings-action(disabled) Day export
-          button.settings-action(disabled) Week export
-          button.settings-action(disabled) Month export
+          button.settings-action(@click="$router.push('/chronio')") Open Activities export
 </template>
 
 <script lang="ts">
