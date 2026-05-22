@@ -325,7 +325,7 @@ div.chronio-view
       v-else-if="selectedPeriod === 'week'"
       :days="weekDays"
       :label="periodDisplay"
-      :score-label="scoreLabel(activeWindowEvents)"
+      :productivity-label="productivityLabel(exportRows)"
       @select-day="selectDay"
     )
 
@@ -548,6 +548,7 @@ import { getClient } from '~/util/awclient';
 import { extractBrowserSubContext, supportsBrowserSubContext } from '~/util/browserSubContext';
 import {
   buildChronioExportRows,
+  chronioProductivityPercent,
   chronioEventsForDate,
   chronioManualRuleMatches,
   chronioPeriodStart,
@@ -956,19 +957,8 @@ export default {
       return formatDuration(total);
     },
 
-    /* #4: weighted productivity score — sum(dur * score) / (total_dur * 10) * 100 */
     productivityScore(): number | '—' {
-      const total = (this.activeWindowEvents as any[]).reduce(
-        (s: number, e: any) => s + (e.duration || 0), 0
-      );
-      if (total === 0) return '—';
-      const catStore = this.categoryStore as any;
-      let weighted = 0;
-      for (const cat of this.activitiesTree as any[]) {
-        const score: number = catStore.get_category_score(cat.category) || 0;
-        weighted += cat.duration * score;
-      }
-      return Math.round(Math.max(0, Math.min(100, (weighted / (total * 10)) * 100)));
+      return chronioProductivityPercent(this.exportRows as any[]) ?? '—';
     },
 
     productivityScoreClass(): string {
@@ -1440,8 +1430,9 @@ export default {
         const date = cursor.format('YYYY-MM-DD');
         const events = this.eventsForDate(this.activeWindowEvents as any[], date);
         const duration = summariesByDate[date]?.trackedSeconds || 0;
+        const productivity = chronioProductivityPercent(this.exportRowsForEvents(events));
         days.push({
-          barColor: this.scoreForEvents(events) < 0 ? '#ef4444' : '#22c55e',
+          barColor: this.productivityColor(productivity),
           date,
           day: cursor.date(),
           inMonth: cursor.isSame(monthStart, 'month'),
@@ -1449,6 +1440,8 @@ export default {
           key: date,
           productiveWidth:
             duration > 0 ? Math.max(8, Math.round((duration / maxDuration) * 100)) + '%' : '0',
+          productivityTitle:
+            productivity === null ? 'No tracked activity' : `Productivity: ${productivity}%`,
           trackedTime: duration > 0 ? formatDuration(duration) : '',
         });
         cursor.add(1, 'day');
@@ -1987,16 +1980,25 @@ export default {
       return chronioEventsForDate(events, date);
     },
 
-    scoreForEvents(events: any[]): number {
-      return events.reduce((total: number, event: any) => {
-        const score = (this.categoryStore as any).get_category_score(this.classifyEventCategory(event));
-        return total + ((event.duration || 0) / 3600) * score;
-      }, 0);
+    exportRowsForEvents(events: any[]): any[] {
+      return buildChronioExportRows(
+        events,
+        (event: any) => this.eventIdentity(event),
+        (event: any) => this.classifyEventCategory(event),
+        (category: string[]) => (this.categoryStore as any).get_category_score(category)
+      );
     },
 
-    scoreLabel(events: any[]): string {
-      const score = this.scoreForEvents(events);
-      return (score >= 0 ? '+' : '') + score.toFixed(1);
+    productivityLabel(rows: any[]): string {
+      const productivity = chronioProductivityPercent(rows);
+      return productivity === null ? '-' : `${productivity}%`;
+    },
+
+    productivityColor(productivity: number | null): string {
+      if (productivity === null) return '#6b7280';
+      if (productivity >= 70) return '#22c55e';
+      if (productivity >= 40) return '#eab308';
+      return '#ef4444';
     },
 
     buildTimeline(events: any[]): any[] {

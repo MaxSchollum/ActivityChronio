@@ -4,9 +4,9 @@
     div
       h1 {{ label }}
       p Seven day review with category totals aggregated in the sidebar.
-    .week-score
-      span Productivity score
-      strong {{ scoreLabel }}
+    .week-score(:title="productivityTitle")
+      span Productivity
+      strong {{ productivityLabel }}
   .week-columns
     article.week-day(v-for="day in days" :key="day.date")
       button.week-day-header(@click="$emit('select-day', day.date)")
@@ -36,9 +36,14 @@ export default {
       type: String,
       required: true,
     },
-    scoreLabel: {
+    productivityLabel: {
       type: String,
       required: true,
+    },
+  },
+  computed: {
+    productivityTitle(): string {
+      return 'Productive category score as a percentage of tracked time';
     },
   },
 };

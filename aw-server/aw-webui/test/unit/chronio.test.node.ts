@@ -1,5 +1,6 @@
 import {
   buildChronioExportRows,
+  chronioProductivityPercent,
   chronioEventsForDate,
   chronioPeriodStart,
   classifyChronioCategory,
@@ -135,5 +136,19 @@ describe('Chronio exports', () => {
       '2026-05-19T09:15:00.000Z,Mail,Inbox,Comms > Email,300,0'
     );
     expect(JSON.parse(serializeChronioExportRows(rows, 'json'))).toEqual(rows);
+  });
+
+  test('calculates bounded productivity percentages from scored tracked rows', () => {
+    expect(
+      chronioProductivityPercent([
+        { durationSeconds: 1800, productivityScore: 10 },
+        { durationSeconds: 900, productivityScore: 0 },
+        { durationSeconds: 900, productivityScore: -10 },
+      ])
+    ).toBe(25);
+    expect(
+      chronioProductivityPercent([{ durationSeconds: 600, productivityScore: -10 }])
+    ).toBe(0);
+    expect(chronioProductivityPercent([])).toBeNull();
   });
 });

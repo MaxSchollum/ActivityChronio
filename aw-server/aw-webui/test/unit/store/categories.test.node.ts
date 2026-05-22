@@ -45,6 +45,17 @@ describe('categories store', () => {
     expect(categoryStore.all_categories).toHaveLength(1);
   });
 
+  test('keeps explicit neutral child scores instead of inheriting parent productivity', () => {
+    categoryStore.load([
+      { name: ['Work'], rule: { type: 'none' }, data: { score: 10 } },
+      { name: ['Work', 'Neutral'], rule: { type: 'none' }, data: { score: 0 } },
+      { name: ['Work', 'Inherited'], rule: { type: 'none' } },
+    ]);
+
+    expect(categoryStore.get_category_score(['Work', 'Neutral'])).toBe(0);
+    expect(categoryStore.get_category_score(['Work', 'Inherited'])).toBe(10);
+  });
+
   test('get category hierarchy', () => {
     categoryStore.restoreDefaultClasses();
     const hier = categoryStore.classes_hierarchy;
