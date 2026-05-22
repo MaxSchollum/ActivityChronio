@@ -173,6 +173,18 @@ div.chronio-view
                 span(:class="{hit: row.goal.hit}") {{ row.goal.hit ? 'Hit' : 'In progress' }}
               .sr-goal-track
                 .sr-goal-fill(:class="{hit: row.goal.hit}" :style="{width: row.goal.percent + '%'}")
+            .sr-sparkline(
+              v-if="row.sparkline"
+              :class="{loading: row.sparklineLoading, empty: row.sparklineEmpty}"
+              :aria-label="'Recent activity for ' + row.label"
+            )
+              span.sr-sparkline-bar(
+                v-for="bar in row.sparkline"
+                :key="bar.date"
+                :class="{zero: bar.duration === 0}"
+                :style="{height: bar.height + '%', background: row.color}"
+                :title="bar.title"
+              )
 
         //- Mini calendar (#52)
         .sidebar-calendar
@@ -641,6 +653,10 @@ export default {
       searchLoadedRangeKey: '' as string,
       searchDebounceTimer: null as any,
       searchRequestId: 0 as number,
+      sparklineEvents: [] as any[],
+      sparklineLoading: false as boolean,
+      sparklineLoadedRangeKey: '' as string,
+      sparklineRequestId: 0 as number,
       showWeeklyReport: false as boolean,
       showDatePicker: false as boolean,
       showAwayBlocks: true as boolean,
@@ -1053,6 +1069,33 @@ export default {
       return result;
     },
 
+    categorySparklineDates(): { date: string; title: string }[] {
+      if (!this.selectedDate) return [];
+      return Array.from({ length: 7 }, (_, index) => {
+        const day = moment(this.selectedDate).subtract(6 - index, 'days');
+        return {
+          date: day.format('YYYY-MM-DD'),
+          title: day.format('ddd, MMM D'),
+        };
+      });
+    },
+
+    categorySparklineDurations(): Record<string, Record<string, number>> {
+      const byCategory: Record<string, Record<string, number>> = {};
+      const dates = new Set((this.categorySparklineDates as any[]).map((day: any) => day.date));
+      for (const event of this.sparklineEvents as any[]) {
+        const date = moment(event.timestamp).format('YYYY-MM-DD');
+        if (!dates.has(date)) continue;
+        const category = this.classifyEventCategory(event);
+        for (let depth = 1; depth <= category.length; depth++) {
+          const key = category.slice(0, depth).join('>');
+          if (!byCategory[key]) byCategory[key] = {};
+          byCategory[key][date] = (byCategory[key][date] || 0) + (event.duration || 0);
+        }
+      }
+      return byCategory;
+    },
+
     unassignedTime(): string {
       const uncat = (this.activitiesTree as any[]).find(
         (n: any) => n.category[0] === 'Uncategorized'
@@ -1073,6 +1116,7 @@ export default {
           const dur = durations[key] || 0;
           const score = catStore.get_category_score(cat.name);
           const targetMinutes = Number(cat.data?.dailyTargetMinutes || 0);
+          const sparkline = this.categorySparklineBars(key);
           const goal =
             this.selectedPeriod === 'day' && targetMinutes > 0
               ? {
@@ -1092,6 +1136,10 @@ export default {
             time: dur > 0 ? formatDuration(dur) : '',
             score,
             goal,
+            sparkline,
+            sparklineEmpty:
+              sparkline && sparkline.every((bar: any) => bar.duration === 0),
+            sparklineLoading: !!sparkline && this.sparklineLoading,
             dailyTargetMinutes: targetMinutes > 0 ? targetMinutes : null,
           });
           if (expanded[key] && cat.children && cat.children.length > 0) {
@@ -1742,6 +1790,84 @@ export default {
         timeLabel: formatHHMM(start.toISOString()) + ' - ' + formatHHMM(end.toISOString()),
         title: identity.title,
       };
+    },
+
+    categorySparklineBars(key: string): any[] | null {
+      if (
+        this.selectedPeriod !== 'day' ||
+        !this.settingsStore.chronioCategorySparklinesVisible
+      ) {
+        return null;
+      }
+
+      const dates = this.categorySparklineDates as any[];
+      const durations = this.categorySparklineDurations[key] || {};
+      const maxDuration = Math.max(0, ...dates.map((day: any) => durations[day.date] || 0));
+      const loadingHeights = [26, 54, 38, 70, 44, 62, 34];
+      return dates.map((day: any, index: number) => {
+        const duration = durations[day.date] || 0;
+        return {
+          date: day.date,
+          duration,
+          height: this.sparklineLoading && !this.sparklineLoadedRangeKey
+            ? loadingHeights[index]
+            : duration > 0 && maxDuration > 0
+              ? Math.max(18, Math.round((duration / maxDuration) * 100))
+              : 0,
+          title: this.sparklineLoading && !this.sparklineLoadedRangeKey
+            ? 'Loading recent activity'
+            : day.title + ': ' + formatDuration(duration),
+        };
+      });
+    },
+
+    async loadCategorySparklines() {
+      if (
+        !this.host ||
+        this.selectedPeriod !== 'day' ||
+        !this.settingsStore.chronioCategorySparklinesVisible
+      ) {
+        this.sparklineRequestId++;
+        this.sparklineEvents = [];
+        this.sparklineLoading = false;
+        this.sparklineLoadedRangeKey = '';
+        return;
+      }
+
+      const end = moment(this.selectedDate).add(1, 'day').startOf('day');
+      const start = end.clone().subtract(7, 'days');
+      const rangeKey = start.format('YYYY-MM-DD') + '/' + end.format('YYYY-MM-DD');
+      if (this.sparklineLoadedRangeKey === rangeKey) return;
+
+      const requestId = ++this.sparklineRequestId;
+      this.sparklineEvents = [];
+      this.sparklineLoading = true;
+      this.sparklineLoadedRangeKey = '';
+
+      const allHosts: string[] = (this.bucketsStore.hosts as string[])
+        .filter((host: string) => host && host !== 'unknown' && !/^\d+\.\d+\.\d+\.\d+$/.test(host));
+      const windowBuckets: string[] = allHosts.flatMap((host: string) => this.bucketsStore.bucketsWindow(host));
+      const afkBuckets: string[] = allHosts.flatMap((host: string) => this.bucketsStore.bucketsAFK(host));
+      const params = { start: start.toDate(), end: end.toDate(), limit: -1 };
+
+      try {
+        const [windowEventArrays, afkEventArrays] = await Promise.all([
+          Promise.all(windowBuckets.map((bucket: string) =>
+            getClient().getEvents(bucket, params).catch(() => [])
+          )),
+          Promise.all(afkBuckets.map((bucket: string) =>
+            getClient().getEvents(bucket, params).catch(() => [])
+          )),
+        ]);
+        if (requestId !== this.sparklineRequestId) return;
+        this.sparklineEvents = this.activeEventsFor(windowEventArrays.flat(), afkEventArrays.flat());
+        this.sparklineLoadedRangeKey = rangeKey;
+      } catch (error) {
+        if (requestId !== this.sparklineRequestId) return;
+        this.sparklineEvents = [];
+      } finally {
+        if (requestId === this.sparklineRequestId) this.sparklineLoading = false;
+      }
     },
 
     clearAdvancedSearch() {
@@ -2982,6 +3108,7 @@ export default {
 
         this.windowEvents = mergeEvents(windowEvtArrays);
         this.afkEvents = mergeEvents(afkEvtArrays);
+        this.loadCategorySparklines();
         if (!silent) {
           this.loading = false;
           this.$nextTick(() => this.scrollTimeline());
@@ -3499,6 +3626,33 @@ export default {
   height: 100%;
   min-width: 2px;
   &.hit { background: #1db954; }
+}
+
+.sr-sparkline {
+  align-items: flex-end;
+  display: flex;
+  gap: 2px;
+  height: 12px;
+  padding-left: 26px;
+}
+
+.sr-sparkline-bar {
+  border-radius: 2px 2px 0 0;
+  flex: 1;
+  min-height: 2px;
+  opacity: 0.72;
+}
+
+.sr-sparkline-bar.zero {
+  opacity: 0.18;
+}
+
+.sr-sparkline.empty .sr-sparkline-bar {
+  opacity: 0.18;
+}
+
+.sr-sparkline.loading .sr-sparkline-bar {
+  opacity: 0.28;
 }
 
 .sr-expand-btn {
