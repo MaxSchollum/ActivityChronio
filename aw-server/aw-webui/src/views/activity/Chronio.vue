@@ -6,25 +6,56 @@ div.chronio-view
       span Chronio
     .chronio-topbar-right
       .chronio-date-nav
+        button.chronio-today-btn(
+          :class="{'is-hidden': isToday}"
+          :aria-hidden="isToday ? 'true' : 'false'"
+          :tabindex="isToday ? -1 : 0"
+          @click="goToToday"
+        ) Today
         button.chronio-nav-btn(@click="prevDay") &larr;
-        .chronio-chip.date(@click="showDatePicker = !showDatePicker")
-          span {{ periodDisplay }}
-          input.date-input(
+        .chronio-date-picker
+          button.chronio-chip.date(
+            type="button"
+            :aria-expanded="showDatePicker ? 'true' : 'false'"
+            @click.stop="toggleDatePicker"
+          ) {{ periodDisplay }}
+          .chronio-date-popover(
             v-if="showDatePicker"
-            type="date"
-            :value="selectedDate"
-            @input="onDateChange($event.target.value)"
-            @keydown.enter.prevent="onDateChange($event.target.value)"
             @click.stop
-            @blur="showDatePicker = false"
           )
+            .cal-jump
+              select(
+                aria-label="Calendar month"
+                :value="calendarMonth"
+                @change="jumpCalendarMonth($event.target.value)"
+              )
+                option(v-for="month in calendarMonthOptions" :key="month.value" :value="month.value") {{ month.label }}
+              select(
+                aria-label="Calendar year"
+                :value="calendarYear"
+                @change="jumpCalendarYear($event.target.value)"
+              )
+                option(v-for="year in calendarYearOptions" :key="year" :value="year") {{ year }}
+            .cal-header
+              button.cal-nav(type="button" @click="prevCalMonth") ‹
+              span.cal-title {{ calendarMonthLabel }}
+              button.cal-nav(type="button" @click="nextCalMonth") ›
+            .cal-grid
+              span.cal-dow(v-for="(d, i) in ['S','M','T','W','T','F','S']" :key="'top-' + i") {{ d }}
+              .cal-day(
+                v-for="cell in calendarDays"
+                :key="'top-' + cell.key"
+                :class="{ 'in-month': cell.inMonth, 'is-today': cell.isToday, 'is-selected': cell.isSelected, 'has-data': cell.hasData }"
+                @click="cell.inMonth && onDateChange(cell.date)"
+              )
+                span(v-if="cell.inMonth") {{ cell.day }}
+                .cal-dot(v-if="cell.hasData && cell.inMonth")
         button.chronio-nav-btn(@click="nextDay" :disabled="isToday") &rarr;
-        button.chronio-today-btn(v-if="!isToday" @click="goToToday") Today
       .chronio-period-toggle
         button(:class="{active: selectedPeriod === 'day'}" @click="setPeriod('day')") Day
         button(:class="{active: selectedPeriod === 'week'}" @click="setPeriod('week')") Week
         button(:class="{active: selectedPeriod === 'month'}" @click="setPeriod('month')") Month
-      .chronio-metric
+      .chronio-metric.tracked-metric
         span.label Tracked:
         span.value {{ totalTrackedTime }}
       .chronio-metric(v-if="productivityScore !== '—'")
@@ -875,6 +906,18 @@ export default {
 
     calendarMonthLabel(): string {
       return moment().year(this.calendarYear).month(this.calendarMonth).format('MMM YYYY');
+    },
+
+    calendarMonthOptions(): { label: string; value: number }[] {
+      return moment.months().map((label: string, value: number) => ({ label, value }));
+    },
+
+    calendarYearOptions(): number[] {
+      const currentYear = moment().year();
+      const selectedYear = this.calendarYear || currentYear;
+      const start = Math.min(currentYear - 10, selectedYear);
+      const end = Math.max(currentYear + 1, selectedYear);
+      return Array.from({ length: end - start + 1 }, (_, index) => start + index);
     },
 
     calendarDays(): any[] {
@@ -3078,6 +3121,29 @@ export default {
       this.calendarMonth = m.month();
       this.loadCalendarDots();
     },
+    jumpCalendarMonth(month: string) {
+      this.calendarMonth = Number(month);
+      this.loadCalendarDots();
+    },
+    jumpCalendarYear(year: string) {
+      this.calendarYear = Number(year);
+      this.loadCalendarDots();
+    },
+    toggleDatePicker() {
+      if (this.showDatePicker) {
+        this.closeDatePicker();
+        return;
+      }
+
+      const selected = moment(this.selectedDate);
+      this.calendarYear = selected.year();
+      this.calendarMonth = selected.month();
+      this.showDatePicker = true;
+      this.loadCalendarDots();
+    },
+    closeDatePicker() {
+      this.showDatePicker = false;
+    },
     async loadCalendarDots() {
       const monthStart = moment().year(this.calendarYear).month(this.calendarMonth).startOf('month').toDate();
       const monthEnd = moment().year(this.calendarYear).month(this.calendarMonth).endOf('month').toDate();
@@ -3408,12 +3474,14 @@ export default {
     this.startLiveRefresh();
     this.keyHandler = this.onGlobalKeyDown.bind(this);
     window.addEventListener('keydown', this.keyHandler);
+    window.addEventListener('click', this.closeDatePicker);
   },
 
   beforeDestroy() {
     this.stopLiveRefresh();
     if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
     if (this.keyHandler) window.removeEventListener('keydown', this.keyHandler);
+    window.removeEventListener('click', this.closeDatePicker);
   },
 };
 </script>
@@ -3542,28 +3610,74 @@ export default {
   text-align: center;
 }
 
-.date-input {
+.chronio-date-picker {
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.chronio-date-popover {
   position: absolute;
   top: 100%;
-  left: 0;
-  z-index: 10;
-  margin-top: 4px;
+  left: 50%;
+  z-index: 12;
+  margin-top: 8px;
+  width: 232px;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.32);
   color: var(--text);
-  padding: 6px;
-  font-size: 12px;
+  padding: 10px;
+  transform: translateX(-50%);
+}
+
+.chronio-date-popover .cal-header {
+  margin-bottom: 8px;
+}
+
+.cal-jump {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  margin-bottom: 8px;
+}
+
+.cal-jump select {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 11px;
+  height: 28px;
+  min-width: 0;
+  padding: 0 6px;
 }
 
 .chronio-metric {
+  align-items: center;
   display: inline-flex;
+  flex: 0 0 108px;
   gap: 6px;
   width: 108px;
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
-  .value { color: var(--text); font-weight: 600; }
+  .value {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+}
+
+.chronio-metric.tracked-metric {
+  flex-basis: 120px;
+  justify-content: space-between;
+  width: 120px;
+
+  .value {
+    min-width: 52px;
+    text-align: right;
+  }
 }
 
 .chronio-afk-badge {
@@ -4833,6 +4947,7 @@ export default {
   cursor: pointer;
   white-space: nowrap;
   &:hover { background: rgba(75,139,255,0.25); }
+  &.is-hidden { pointer-events: none; visibility: hidden; }
 }
 
 /* ── PRODUCTIVITY SCORE (#4) ─────────────────────────────────────── */
