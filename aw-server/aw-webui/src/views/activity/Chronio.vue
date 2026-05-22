@@ -1440,13 +1440,17 @@ export default {
         const date = cursor.format('YYYY-MM-DD');
         const events = this.eventsForDate(this.activeWindowEvents as any[], date);
         const duration = summariesByDate[date]?.trackedSeconds || 0;
+        const isDistracting = this.scoreForEvents(events) < 0;
         days.push({
-          barColor: this.scoreForEvents(events) < 0 ? '#ef4444' : '#22c55e',
+          barColor: isDistracting ? '#ef4444' : '#22c55e',
           date,
           day: cursor.date(),
           inMonth: cursor.isSame(monthStart, 'month'),
           isToday: cursor.isSame(moment(), 'day'),
           key: date,
+          productivityTitle: duration > 0
+            ? 'Tracked time bar: ' + (isDistracting ? 'net distracting' : 'net productive')
+            : 'No tracked activity',
           productiveWidth:
             duration > 0 ? Math.max(8, Math.round((duration / maxDuration) * 100)) + '%' : '0',
           trackedTime: duration > 0 ? formatDuration(duration) : '',
