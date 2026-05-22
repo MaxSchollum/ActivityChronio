@@ -6,7 +6,7 @@ Chronio is a personal macOS activity tracker forked from ActivityWatch. Core goa
 
 ## What's Built Today
 
-> All shipped features live on the `claude/romantic-neumann` branch.
+> V1 and V2 shipped scope live on `master` as of 2026-05-22.
 
 | Feature | Status |
 |---------|--------|
@@ -25,6 +25,13 @@ Chronio is a personal macOS activity tracker forked from ActivityWatch. Core goa
 | Category auto-classification from regex rules | Done |
 | Sidebar category filter | Done |
 | Search (substring on app/title) | Done |
+| Week and month review views | Done |
+| Productivity trends and sidebar sparklines | Done |
+| Advanced search, exports, and weekly reports | Done |
+| Rules manager, goals, settings, and keyboard shortcuts | Done |
+| AFK away blocks and browser sub-context grouping | Done |
+| Screenshot watcher, filmstrip, timeline markers, retention, delete-hour flow | Done |
+| macOS Chronio packaging path and app identity | Done, distribution validation still needs signing/notarization |
 
 ---
 
@@ -51,7 +58,7 @@ Chronio is a personal macOS activity tracker forked from ActivityWatch. Core goa
 | Expand/collapse persists | localStorage |
 | Sidebar category filter | Filters list + dims timeline |
 | Search | Substring on app + title |
-| Stats/Reports nav disabled | "Coming in V2" tooltip |
+| Stats and reports navigation | Shipped V2 surfaces |
 | "Uncategorized" terminology | Unified throughout |
 | Softer default color palette | Work #22c55e, Media #ef4444, Comms #06b6d4 |
 | Tab title format | "Service: Page Title" extracted from browser window titles |
@@ -62,17 +69,22 @@ Chronio is a personal macOS activity tracker forked from ActivityWatch. Core goa
 | Legacy AW routes removed | Non-Chronio routes redirect to `/chronio` |
 | Multi-select polish | Cmd+click toggles selected rows on/off |
 
-## What's NOT Built
+## V2 Shipped State
 
-There are no open V1 GitHub issues as of 2026-05-20. Remaining product scope below belongs to V2.
+The V2 feature batch landed on `master` on 2026-05-22. Shipped surfaces now
+include Day, Week, Month, Stats, Reports, Settings, Rules, goals, advanced
+search, export/reporting, browser sub-context grouping, away visualization,
+sidebar sparklines, screenshot capture/viewing, and the macOS Chronio package
+path.
 
-| Gap | Target |
-|-----|--------|
-| Screenshot capture and filmstrip viewer | V2 |
-| Week/month views and multi-day review | V2 |
-| macOS app packaging and distribution | V2 |
-| In-app settings page | V2 |
-| Advanced search and exports/reports | V2 |
+The remaining acceptance work is release validation, not missing product
+surface area:
+
+| Limit | Status |
+|-------|--------|
+| Signed and notarized distribution | Requires Apple Developer signing and notarization credentials |
+| Screenshot permission validation | Needs a real packaged macOS run with Screen Recording permission |
+| Package artifact verification on each handoff machine | Requires the local PyInstaller packaging toolchain |
 
 ---
 
@@ -361,6 +373,7 @@ In-app settings (no more jumping to AW settings):
 - Categories: import/export, restore defaults
 - Appearance: start of day, start of week
 - Screenshots: enable/disable, interval, storage limit
+- Screenshots: JPEG quality and retention controls
 - Privacy: excluded apps, excluded title patterns
 - Data: export as CSV/JSON
 
