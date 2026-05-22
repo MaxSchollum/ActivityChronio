@@ -508,6 +508,7 @@ import { useSettingsStore } from '~/stores/settings';
 import { get_today_with_offset } from '~/util/time';
 import { getColorFromString } from '~/util/color';
 import { getClient } from '~/util/awclient';
+import { extractBrowserSubContext, supportsBrowserSubContext } from '~/util/browserSubContext';
 import ChronioDay from './ChronioDay.vue';
 import ChronioMonth from './ChronioMonth.vue';
 import ChronioReport from './ChronioReport.vue';
@@ -1933,14 +1934,18 @@ export default {
       if (this.isBrowserApp(rawApp)) {
         const site = this.browserSiteFor(readableTitle, url);
         if (site) {
-          const title = site.pageTitle && site.pageTitle !== site.label ? site.pageTitle : normalizedTitle;
+          const contextTitle = extractBrowserSubContext(site.label, normalizedTitle);
+          const pageTitle = site.pageTitle && site.pageTitle !== site.label
+            ? site.pageTitle
+            : normalizedTitle;
+          const title = contextTitle || (supportsBrowserSubContext(site.label) ? site.label : pageTitle);
           return {
             rawApp,
             app: site.label,
             title: title || site.label,
             rawTitle,
             url,
-            matchText: [site.label, title, normalizedTitle, rawTitle, url].filter(Boolean).join('\n'),
+            matchText: [site.label, title, pageTitle, normalizedTitle, rawTitle, url].filter(Boolean).join('\n'),
           };
         }
       }
