@@ -47,8 +47,8 @@ div.trends-view
             small Per day in the selected range
           .metric
             span Average productivity
-            strong(:class="scoreTone(averageProductivity)") {{ formatScore(averageProductivity) }}
-            small Category score-hours per day
+            strong(:class="productivityTone(averageProductivity)") {{ formatProductivity(averageProductivity) }}
+            small Scored tracked time in this range
           .metric
             span Most productive day
             strong {{ topWeekdayLabel }}
@@ -62,7 +62,7 @@ div.trends-view
           section.chart-panel
             header
               h2 Daily productivity
-              span Score-hours from category productivity scores
+              span Productive category score as a percentage of tracked time
             .chart-frame
               line-chart(:chart-data="scoreChartData" :chart-options="scoreChartOptions")
 
@@ -102,6 +102,7 @@ import { useBucketsStore } from '~/stores/buckets';
 import { useCategoryStore } from '~/stores/categories';
 import { useSettingsStore } from '~/stores/settings';
 import { getClient } from '~/util/awclient';
+import { chronioProductivityPercent } from '~/util/chronio';
 import { get_today_with_offset } from '~/util/time';
 import {
   TimePeriod,
@@ -125,7 +126,7 @@ interface CategoryDuration {
 
 interface DailyPoint {
   date: string;
-  score: number;
+  productivity: number | null;
   trackedSeconds: number;
   categories: CategoryDuration[];
 }
@@ -224,13 +225,16 @@ export default {
       return `${(total / this.dailyPoints.length / 3600).toFixed(1)}h`;
     },
 
-    averageProductivity(): number {
-      if (this.dailyPoints.length === 0) return 0;
-      const total = this.dailyPoints.reduce(
-        (score: number, point: DailyPoint) => score + point.score,
+    averageProductivity(): number | null {
+      const tracked = this.dailyPoints.reduce(
+        (seconds: number, point: DailyPoint) => seconds + point.trackedSeconds,
         0
       );
-      return total / this.dailyPoints.length;
+      if (!tracked) return null;
+      const weighted = this.dailyPoints.reduce((total: number, point: DailyPoint) => {
+        return total + (point.productivity || 0) * point.trackedSeconds;
+      }, 0);
+      return Math.round(weighted / tracked);
     },
 
     scoreChartData() {
@@ -238,8 +242,8 @@ export default {
         labels: this.dailyPoints.map((point: DailyPoint) => moment(point.date).format('MMM D')),
         datasets: [
           {
-            label: 'Productivity score',
-            data: this.dailyPoints.map((point: DailyPoint) => point.score),
+            label: 'Productivity',
+            data: this.dailyPoints.map((point: DailyPoint) => point.productivity),
             borderColor: '#2e7d53',
             backgroundColor: 'rgba(46, 125, 83, 0.14)',
             pointBackgroundColor: '#2e7d53',
@@ -261,7 +265,7 @@ export default {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: context => `Productivity: ${this.formatScore(context.parsed.y)}`,
+              label: context => `Productivity: ${this.formatProductivity(context.parsed.y)}`,
             },
           },
         },
@@ -272,7 +276,10 @@ export default {
           },
           y: {
             grid: { color: 'rgba(34, 47, 62, 0.1)' },
-            title: { display: true, text: 'Score-hours' },
+            min: 0,
+            max: 100,
+            ticks: { callback: value => `${value}%` },
+            title: { display: true, text: 'Productivity' },
           },
         },
       };
@@ -377,18 +384,22 @@ export default {
       return Array.from({ length: 24 }, (_, hour) => hour);
     },
 
-    weekdayScoreTotals(): number[] {
-      const totals = Array.from({ length: 7 }, () => 0);
+    weekdayProductivity(): (number | null)[] {
+      const totals = Array.from({ length: 7 }, () => ({ weighted: 0, trackedSeconds: 0 }));
       for (const point of this.dailyPoints as DailyPoint[]) {
-        totals[moment(point.date).day()] += point.score;
+        const total = totals[moment(point.date).day()];
+        total.weighted += (point.productivity || 0) * point.trackedSeconds;
+        total.trackedSeconds += point.trackedSeconds;
       }
-      return totals;
+      return totals.map(total => {
+        return total.trackedSeconds ? Math.round(total.weighted / total.trackedSeconds) : null;
+      });
     },
 
     topWeekday(): number {
       let topWeekday = 0;
-      for (let weekday = 1; weekday < this.weekdayScoreTotals.length; weekday++) {
-        if (this.weekdayScoreTotals[weekday] > this.weekdayScoreTotals[topWeekday]) {
+      for (let weekday = 1; weekday < this.weekdayProductivity.length; weekday++) {
+        if ((this.weekdayProductivity[weekday] || 0) > (this.weekdayProductivity[topWeekday] || 0)) {
           topWeekday = weekday;
         }
       }
@@ -402,7 +413,7 @@ export default {
 
     topWeekdayDetail(): string {
       if (!this.hasDailyData) return 'Selected range has no tracked time';
-      return `${this.formatScore(this.weekdayScoreTotals[this.topWeekday])} total score`;
+      return `${this.formatProductivity(this.weekdayProductivity[this.topWeekday])} average productivity`;
     },
 
     weekdayCounts(): number[] {
@@ -521,7 +532,7 @@ export default {
           const events = result && result.cat_events ? result.cat_events : [];
           return {
             date: periodStart(period).format('YYYY-MM-DD'),
-            score: this.scoreEvents(events),
+            productivity: this.productivityPercent(events),
             trackedSeconds: this.trackedSeconds(events),
             categories: this.categoryDurations(events),
           };
@@ -545,6 +556,15 @@ export default {
       return events.reduce(
         (duration: number, event: IEvent) => duration + (event.duration || 0),
         0
+      );
+    },
+
+    productivityPercent(events: IEvent[]): number | null {
+      return chronioProductivityPercent(
+        events.map((event: IEvent) => ({
+          durationSeconds: event.duration || 0,
+          productivityScore: this.categoryStore.get_category_score(categoryName(event)),
+        }))
       );
     },
 
@@ -635,6 +655,10 @@ export default {
       return `${rounded > 0 ? '+' : ''}${rounded.toFixed(1)}`;
     },
 
+    formatProductivity(productivity: number | null): string {
+      return productivity === null ? '-' : `${Math.round(productivity)}%`;
+    },
+
     formatCellScore(score: number): string {
       return this.formatScore(score);
     },
@@ -643,10 +667,11 @@ export default {
       return moment().startOf('day').hour(hour).format('ha');
     },
 
-    scoreTone(score: number): string {
-      if (score > 0.05) return 'positive';
-      if (score < -0.05) return 'negative';
-      return 'neutral';
+    productivityTone(productivity: number | null): string {
+      if (productivity === null) return 'neutral';
+      if (productivity >= 70) return 'positive';
+      if (productivity >= 40) return 'neutral';
+      return 'negative';
     },
   },
 };

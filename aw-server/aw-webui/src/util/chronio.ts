@@ -22,6 +22,11 @@ export type ChronioExportRow = {
   productivityScore: number;
 };
 
+export type ChronioProductivityRow = Pick<
+  ChronioExportRow,
+  'durationSeconds' | 'productivityScore'
+>;
+
 export type ChronioDateCategorySummary = {
   date: string;
   trackedSeconds: number;
@@ -97,6 +102,21 @@ export function buildChronioExportRows(
         productivityScore: scoreForCategory(category) || 0,
       };
     });
+}
+
+export function chronioProductivityPercent(rows: ChronioProductivityRow[]): number | null {
+  const total = rows.reduce(
+    (seconds: number, row: ChronioProductivityRow) => seconds + row.durationSeconds,
+    0
+  );
+  if (!total) return null;
+
+  const weighted = rows.reduce(
+    (score: number, row: ChronioProductivityRow) =>
+      score + row.durationSeconds * row.productivityScore,
+    0
+  );
+  return Math.round(Math.max(0, Math.min(100, (weighted / (total * 10)) * 100)));
 }
 
 export function serializeChronioExportRows(

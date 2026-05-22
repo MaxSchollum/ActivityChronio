@@ -53,6 +53,7 @@
 
 <script lang="ts">
 import moment from 'moment';
+import { chronioProductivityPercent } from '~/util/chronio';
 
 type ReportRow = {
   timestamp: string;
@@ -76,16 +77,6 @@ function formatDuration(seconds: number): string {
   const minutes = totalMinutes % 60;
   if (hours > 0) return hours + 'h ' + minutes + 'm';
   return minutes + 'm';
-}
-
-function productivityPercent(rows: ReportRow[]): number | null {
-  const total = rows.reduce((seconds: number, row: ReportRow) => seconds + row.durationSeconds, 0);
-  if (!total) return null;
-  const weighted = rows.reduce(
-    (score: number, row: ReportRow) => score + row.durationSeconds * row.productivityScore,
-    0
-  );
-  return Math.round(Math.max(0, Math.min(100, (weighted / (total * 10)) * 100)));
 }
 
 function summarize(rows: ReportRow[], labelFor: (row: ReportRow) => string): DurationSummary[] {
@@ -148,7 +139,7 @@ export default {
     },
 
     productivityLabel(): string {
-      const score = productivityPercent(this.reportRows);
+      const score = chronioProductivityPercent(this.reportRows);
       return score === null ? '-' : score + '%';
     },
 
@@ -169,7 +160,7 @@ export default {
         days.push({
           date,
           label: cursor.format('ddd, MMM D'),
-          score: productivityPercent(rows) || 0,
+          score: chronioProductivityPercent(rows) || 0,
           seconds,
           trackedLabel: formatDuration(seconds),
         });

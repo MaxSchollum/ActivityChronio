@@ -183,7 +183,7 @@ export default {
       const color = cat.data ? cat.data.color : undefined;
       const inherit_color = !color;
       const score = cat.data ? cat.data.score : undefined;
-      const inherit_score = !score;
+      const inherit_score = score === undefined || score === null;
       const dailyTargetMinutes = cat.data ? cat.data.dailyTargetMinutes : undefined;
       this.editing = {
         id: cat.id,

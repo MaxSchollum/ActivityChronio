@@ -14,8 +14,8 @@
       @click="day.inMonth && $emit('select-day', day.date)"
     )
       span {{ day.day }}
-      em {{ day.trackedTime }}
-      .month-bar
+      em(:title="day.productivityTitle") {{ day.trackedTime }}
+      .month-bar(:title="day.productivityTitle")
         i(:style="{width: day.productiveWidth, background: day.barColor}")
 </template>
 
