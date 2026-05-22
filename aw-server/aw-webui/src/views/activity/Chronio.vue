@@ -1820,11 +1820,10 @@ export default {
         this.selectedCatFilter = null;
       } else {
         this.selectedCatFilter = row.key;
-        // #28: auto-expand when selecting a parent
-        if (row.hasChildren && !this.sidebarExpanded[row.key]) {
-          this.$set(this.sidebarExpanded, row.key, true);
-          this.saveExpandState();
-        }
+      }
+      // #28/#65: full-row click toggles expand/collapse for parent categories
+      if (row.hasChildren) {
+        this.toggleSidebarExpand(row);
       }
     },
 
@@ -2771,7 +2770,7 @@ export default {
 }
 
 .chronio-chip.date {
-  min-width: 148px;
+  min-width: 190px;
   text-align: center;
 }
 
