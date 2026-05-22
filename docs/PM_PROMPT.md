@@ -43,7 +43,7 @@ A macOS desktop activity tracker. It reads data from ActivityWatch (AW) watchers
 
 ---
 
-## Current State (as of 2026-05-20)
+## Current State (as of 2026-05-22)
 
 ### Shipped (V1 complete features)
 | Feature | GitHub Issues |
@@ -73,7 +73,7 @@ A macOS desktop activity tracker. It reads data from ActivityWatch (AW) watchers
 | Expand/collapse state persists in localStorage | #23 |
 | Sidebar category filter (filters activity list + dims timeline) | #24 |
 | Search (substring on app + title) | — |
-| Stats/Reports nav items disabled with "Coming in V2" tooltip | QA |
+| Stats and reports navigation | #14, #19 |
 | "Unassigned" renamed to "Uncategorized" throughout | QA |
 | Default category color palette updated (softer: green/red/cyan) | QA |
 | Tab title format: "Service: Page Title" extracted from browser titles | #33 |
@@ -87,21 +87,26 @@ A macOS desktop activity tracker. It reads data from ActivityWatch (AW) watchers
 | Legacy ActivityWatch routes/nav removed or redirected to Chronio | #53 |
 | AFK / idle detection suppresses inactive time | #54 |
 
-### Open Issues (V1)
+### Shipped (V2 feature batch)
 
-The feedback thread opened a new V1 polish/bug pass after the first V1 closeout. These should be handled before starting V2 implementation.
+| Feature | GitHub Issues |
+|---------|--------------|
+| Week and month multi-day review | #13 |
+| Trends dashboard and sidebar sparklines | #14, #50 |
+| Screenshot capture, filmstrip, markers, cleanup, and delete-hour flow | #15 |
+| macOS package path and Chronio app identity | #16 |
+| In-app settings and rules manager | #17, #47 |
+| Advanced search, export, and weekly reports | #18, #19 |
+| Goals, AFK away blocks, and keyboard shortcuts | #48, #49, #51 |
+| Browser sub-context grouping for Codex and ChatGPT | #66 |
+| Regression coverage for shared Chronio V2 logic | #70 |
 
-| # | Title | Priority |
-|---|-------|----------|
-| [#56](https://github.com/MaxSchollum/ActivityChronio/issues/56) | Replace Unknown subgroup labels with useful activity names | High |
-| [#57](https://github.com/MaxSchollum/ActivityChronio/issues/57) | Browser tab identity matching loses sites and context | High |
-| [#58](https://github.com/MaxSchollum/ActivityChronio/issues/58) | Uncategorized appears as a project in project view | High |
-| [#59](https://github.com/MaxSchollum/ActivityChronio/issues/59) | Nested activities cannot be reliably reassigned | High |
-| [#60](https://github.com/MaxSchollum/ActivityChronio/issues/60) | Clarify what activity row colors mean | Medium |
-| [#61](https://github.com/MaxSchollum/ActivityChronio/issues/61) | Chronological view ignores selected category | High |
-| [#62](https://github.com/MaxSchollum/ActivityChronio/issues/62) | Make entire activity row expand details | Medium |
-| [#44](https://github.com/MaxSchollum/ActivityChronio/issues/44) | Keyboard shortcuts for day navigation and date picker jump | Low |
-| [#21](https://github.com/MaxSchollum/ActivityChronio/issues/21) | Large phantom Google Chrome block spanning overnight hours | Needs triage |
+### Current Handoff
+
+The V2 feature tickets above are on `master`. Use
+`docs/V2_QA_HANDOFF.md` for the final QA checklist, commands already run,
+package verification status, and residual blockers before describing a build
+as release-ready.
 
 ---
 
