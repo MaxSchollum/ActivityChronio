@@ -21,11 +21,11 @@ div.trends-view
       nav.sidebar-nav
         button.sidebar-nav-item(@click="$router.push('/chronio')") Activities
         button.sidebar-nav-item.active Stats
-        button.sidebar-nav-item.disabled(type="button" disabled) Reports
+        button.sidebar-nav-item(@click="openReports") Reports
       .sidebar-summary
-        span Average tracked
-        strong {{ averageTrackedHours }}
-        small {{ trackedDays }} of {{ dailyPoints.length }} days have tracked activity
+        span Days tracked
+        strong {{ trackedDays }} / {{ dailyPoints.length }}
+        small {{ rangeLabel }}
 
     main.trends-main
       .trends-message(v-if="loading")
@@ -272,14 +272,14 @@ export default {
         scales: {
           x: {
             grid: { display: false },
-            ticks: { maxTicksLimit: this.rangeDays === 30 ? 10 : 12 },
+            ticks: { color: '#9aa4b2', maxTicksLimit: this.rangeDays === 30 ? 10 : 12 },
           },
           y: {
-            grid: { color: 'rgba(34, 47, 62, 0.1)' },
+            grid: { color: 'rgba(255, 255, 255, 0.08)' },
             min: 0,
             max: 100,
-            ticks: { callback: value => `${value}%` },
-            title: { display: true, text: 'Productivity' },
+            ticks: { callback: value => `${value}%`, color: '#9aa4b2' },
+            title: { color: '#9aa4b2', display: true, text: 'Productivity' },
           },
         },
       };
@@ -355,7 +355,7 @@ export default {
         plugins: {
           legend: {
             position: 'bottom',
-            labels: { boxWidth: 10, boxHeight: 10 },
+            labels: { boxWidth: 10, boxHeight: 10, color: '#9aa4b2' },
           },
           tooltip: {
             callbacks: {
@@ -367,14 +367,15 @@ export default {
           x: {
             stacked: true,
             grid: { display: false },
-            ticks: { maxTicksLimit: this.rangeDays === 30 ? 10 : 12 },
+            ticks: { color: '#9aa4b2', maxTicksLimit: this.rangeDays === 30 ? 10 : 12 },
           },
           y: {
             stacked: true,
             min: 0,
             max: 100,
-            ticks: { callback: value => `${value}%` },
-            title: { display: true, text: 'Tracked time' },
+            grid: { color: 'rgba(255, 255, 255, 0.08)' },
+            ticks: { callback: value => `${value}%`, color: '#9aa4b2' },
+            title: { color: '#9aa4b2', display: true, text: 'Tracked time' },
           },
         },
       };
@@ -482,6 +483,10 @@ export default {
       if (range === this.rangeDays || this.loading) return;
       this.rangeDays = range;
       this.loadTrends();
+    },
+
+    openReports() {
+      this.$router.push({ path: '/chronio/week', query: { report: 'weekly' } });
     },
 
     async loadTrends() {
@@ -679,17 +684,26 @@ export default {
 
 <style lang="scss" scoped>
 .trends-view {
+  --bg: #0f1117;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(255, 255, 255, 0.15);
+  --muted: #9aa4b2;
+  --panel: rgba(20, 24, 33, 0.9);
+  --panel-2: rgba(22, 26, 36, 0.9);
+  --text: #e9eefb;
   min-height: 100vh;
-  background: #f4f6f8;
-  color: #17212b;
+  background:
+    radial-gradient(1200px 700px at 10% -10%, rgba(80, 120, 255, 0.12), transparent 60%),
+    radial-gradient(900px 700px at 90% 10%, rgba(255, 110, 70, 0.12), transparent 55%),
+    var(--bg);
+  color: var(--text);
   display: flex;
   flex-direction: column;
 }
 
 .trends-topbar {
   height: 58px;
-  border-bottom: 1px solid #d7dfe7;
-  background: #fff;
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 24px;
@@ -710,10 +724,11 @@ export default {
 }
 
 .trends-logo {
-  background: conic-gradient(#2e7d53, #2e7d53 26%, #d86145 0, #d86145 48%, #4b77be 0);
-  border-radius: 6px;
-  height: 23px;
-  width: 23px;
+  border: 2px solid #4b8bff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(75, 139, 255, 0.15);
+  height: 26px;
+  width: 26px;
 }
 
 .trends-title {
@@ -732,7 +747,7 @@ export default {
   }
 
   span {
-    color: #627386;
+    color: var(--muted);
     font-size: 13px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -741,8 +756,8 @@ export default {
 }
 
 .range-control {
-  background: #eef2f6;
-  border: 1px solid #d1dbe5;
+  background: var(--panel);
+  border: 1px solid var(--border);
   border-radius: 7px;
   display: flex;
   flex: 0 0 auto;
@@ -752,7 +767,7 @@ export default {
     background: transparent;
     border: 0;
     border-radius: 5px;
-    color: #516476;
+    color: var(--muted);
     font-size: 13px;
     height: 31px;
     min-width: 72px;
@@ -760,9 +775,8 @@ export default {
   }
 
   button.active {
-    background: #fff;
-    box-shadow: 0 1px 2px rgba(23, 33, 43, 0.12);
-    color: #17212b;
+    background: rgba(75, 139, 255, 0.14);
+    color: var(--text);
   }
 
   button:disabled {
@@ -779,8 +793,8 @@ export default {
 }
 
 .trends-sidebar {
-  background: #fbfcfd;
-  border-right: 1px solid #d7dfe7;
+  background: rgba(15, 17, 23, 0.46);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   gap: 22px;
@@ -796,7 +810,7 @@ export default {
   background: transparent;
   border: 0;
   border-radius: 6px;
-  color: #34485a;
+  color: var(--muted);
   font-size: 14px;
   height: 34px;
   padding: 0 10px;
@@ -805,23 +819,19 @@ export default {
 
 .sidebar-nav-item:hover:not(:disabled),
 .sidebar-nav-item.active {
-  background: #e5edf5;
-  color: #17212b;
-}
-
-.sidebar-nav-item.disabled {
-  color: #8c9aaa;
+  background: rgba(75, 139, 255, 0.08);
+  color: var(--text);
 }
 
 .sidebar-summary {
-  border-top: 1px solid #e0e7ed;
+  border-top: 1px solid var(--border);
   display: grid;
   gap: 4px;
   padding: 18px 10px 0;
 
   span,
   small {
-    color: #627386;
+    color: var(--muted);
     font-size: 12px;
   }
 
@@ -848,8 +858,8 @@ export default {
 }
 
 .metric {
-  background: #fff;
-  border: 1px solid #d7dfe7;
+  background: var(--panel);
+  border: 1px solid var(--border);
   border-radius: 7px;
   display: grid;
   gap: 3px;
@@ -858,7 +868,7 @@ export default {
 
   span,
   small {
-    color: #627386;
+    color: var(--muted);
     font-size: 12px;
   }
 
@@ -870,11 +880,11 @@ export default {
   }
 
   strong.positive {
-    color: #1f7a4e;
+    color: #22c55e;
   }
 
   strong.negative {
-    color: #b64545;
+    color: #ef4444;
   }
 }
 
@@ -886,8 +896,8 @@ export default {
 
 .chart-panel,
 .heatmap-panel {
-  background: #fff;
-  border: 1px solid #d7dfe7;
+  background: var(--panel);
+  border: 1px solid var(--border);
   border-radius: 7px;
   min-width: 0;
   padding: 16px;
@@ -907,7 +917,7 @@ export default {
   }
 
   header span {
-    color: #627386;
+    color: var(--muted);
     font-size: 12px;
   }
 }
@@ -919,23 +929,23 @@ export default {
 
 .trends-message {
   align-items: flex-start;
-  background: #fff;
-  border: 1px solid #d7dfe7;
+  background: var(--panel);
+  border: 1px solid var(--border);
   border-radius: 7px;
-  color: #516476;
+  color: var(--muted);
   display: grid;
   gap: 6px;
   padding: 22px;
 
   strong {
-    color: #17212b;
+    color: var(--text);
     font-size: 16px;
     font-weight: 650;
   }
 
   button {
-    background: #17212b;
-    border: 0;
+    background: rgba(75, 139, 255, 0.14);
+    border: 1px solid rgba(75, 139, 255, 0.36);
     border-radius: 6px;
     color: #fff;
     height: 33px;
@@ -949,12 +959,12 @@ export default {
 }
 
 .trends-message.error {
-  border-color: #e2b7b3;
+  border-color: rgba(239, 68, 68, 0.42);
 }
 
 .loading-line {
   animation: load 1.2s ease-in-out infinite;
-  background: linear-gradient(90deg, #dbe4ec, #9dc4af, #dbe4ec);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.05), rgba(75, 139, 255, 0.42), rgba(255, 255, 255, 0.05));
   background-size: 220% 100%;
   border-radius: 4px;
   height: 4px;
@@ -978,7 +988,7 @@ export default {
 .heatmap-hour,
 .heatmap-day {
   align-items: center;
-  color: #627386;
+  color: var(--muted);
   display: flex;
   font-size: 11px;
 }
@@ -990,9 +1000,9 @@ export default {
 
 .heatmap-cell {
   align-items: center;
-  border: 1px solid rgba(23, 33, 43, 0.08);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #10202d;
+  color: var(--text);
   display: flex;
   font-size: 10px;
   justify-content: center;
@@ -1000,9 +1010,9 @@ export default {
 }
 
 .heatmap-empty {
-  border: 1px dashed #d7dfe7;
+  border: 1px dashed var(--border);
   border-radius: 6px;
-  color: #627386;
+  color: var(--muted);
   padding: 18px;
 }
 
@@ -1021,7 +1031,7 @@ export default {
   }
 
   .trends-sidebar {
-    border-bottom: 1px solid #d7dfe7;
+    border-bottom: 1px solid var(--border);
     border-right: 0;
     gap: 12px;
     padding: 12px;

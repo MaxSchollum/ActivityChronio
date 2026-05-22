@@ -3294,6 +3294,10 @@ export default {
       if (period && ['day', 'week', 'month'].includes(period) && period !== this.selectedPeriod) {
         this.selectedPeriod = period;
       }
+      if (to.query?.report === 'weekly') {
+        this.selectedPeriod = 'week';
+        this.showWeeklyReport = true;
+      }
       if (this.showWeeklyReport && this.selectedPeriod !== 'week') {
         this.showWeeklyReport = false;
       }
@@ -3311,6 +3315,10 @@ export default {
     const routeDate = this.$route.params.date;
     if (routePeriod && ['day', 'week', 'month'].includes(routePeriod)) {
       this.selectedPeriod = routePeriod;
+    }
+    if (this.$route.query?.report === 'weekly') {
+      this.selectedPeriod = 'week';
+      this.showWeeklyReport = true;
     }
     this.selectedDate =
       routeDate && moment(routeDate, 'YYYY-MM-DD', true).isValid()
