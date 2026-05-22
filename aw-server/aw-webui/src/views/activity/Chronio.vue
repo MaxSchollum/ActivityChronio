@@ -69,7 +69,7 @@ div.chronio-view
     .chronio-sidebar
       nav.sidebar-nav
         .sidebar-nav-item(:class="{ active: !showWeeklyReport }" @click="closeReport") Activities
-        .sidebar-nav-item(@click="$router.push('/chronio/stats')") Stats
+        .sidebar-nav-item(title="Coming in V2" @click="$router.push('/chronio/stats')") Stats
         .sidebar-nav-item(:class="{ active: showWeeklyReport }" @click="openWeeklyReport") Reports
         .sidebar-nav-item(@click="$router.push('/chronio/settings')") Settings
 
@@ -154,7 +154,7 @@ div.chronio-view
                 @blur="cancelRename"
                 @click.stop
               )
-              span.sr-name(v-else) {{ row.label }}
+              span.sr-name(v-else :title="row.label") {{ row.label }}
               span.sr-score-dot(
                 v-if="row.score !== 0"
                 :class="row.score > 0 ? 'score-productive' : 'score-distracting'"
