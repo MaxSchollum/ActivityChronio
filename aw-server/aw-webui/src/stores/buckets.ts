@@ -118,6 +118,9 @@ export const useBucketsStore = defineStore('buckets', {
       // TODO: This needs a fix so we can get rid of this workaround.
       return (host: string) => this.bucketsByType(host, 'general.stopwatch', true);
     },
+    bucketsScreenshots(): (host: string) => string[] {
+      return host => this.bucketsByType(host, 'screenshot');
+    },
 
     getBucket(this: State): (id: string) => IBucket {
       return id => _.filter(this.buckets, b => b.id === id)[0];
