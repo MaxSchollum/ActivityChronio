@@ -35,6 +35,14 @@ div.chronio-view
         span.value {{ goalSummary.hit }}/{{ goalSummary.total }}
       .chronio-afk-badge(:class="afkStatus" :title="afkStatus === 'active' ? 'AFK idle detection active' : 'No AFK data — idle time not filtered'")
         | {{ afkStatus === 'active' ? 'AFK ✓' : 'AFK ⚠' }}
+      button.chronio-nav-btn.chronio-away-toggle(
+        v-if="selectedPeriod === 'day'"
+        :class="{active: showAwayBlocks}"
+        :disabled="afkStatus !== 'active'"
+        :aria-pressed="showAwayBlocks ? 'true' : 'false'"
+        :title="afkStatus === 'active' ? (showAwayBlocks ? 'Hide away time' : 'Show away time') : 'Away time needs AFK data'"
+        @click="showAwayBlocks = !showAwayBlocks"
+      ) Away
       .chronio-search(:class="{active: isSearchActive}")
         input(
           ref="searchInput"
@@ -635,6 +643,7 @@ export default {
       searchRequestId: 0 as number,
       showWeeklyReport: false as boolean,
       showDatePicker: false as boolean,
+      showAwayBlocks: true as boolean,
       loading: true as boolean,
       selectedEvent: null as any,
       windowEvents: [] as any[],
@@ -1410,10 +1419,60 @@ export default {
         });
     },
 
+    awayTimelineBlocks(): any[] {
+      if (!this.showAwayBlocks || this.selectedPeriod !== 'day') return [];
+
+      const dayStart = moment(this.selectedDate).startOf('day').valueOf();
+      const dayEnd = moment(this.selectedDate).add(1, 'day').startOf('day').valueOf();
+      const thresholdMinutes = Math.max(1, Number(this.settingsStore.chronioAwayThresholdMinutes) || 5);
+      const thresholdMs = thresholdMinutes * 60000;
+      const activeIntervals = [...this.notAfkIntervals]
+        .map((interval: { start: number; end: number }) => ({
+          start: Math.max(dayStart, interval.start),
+          end: Math.min(dayEnd, interval.end),
+        }))
+        .filter((interval: { start: number; end: number }) => interval.end > interval.start)
+        .sort((a: { start: number }, b: { start: number }) => a.start - b.start);
+
+      const mergedIntervals: { start: number; end: number }[] = [];
+      for (const interval of activeIntervals) {
+        const prev = mergedIntervals[mergedIntervals.length - 1];
+        if (prev && interval.start <= prev.end) {
+          prev.end = Math.max(prev.end, interval.end);
+        } else {
+          mergedIntervals.push({ ...interval });
+        }
+      }
+
+      const blocks: any[] = [];
+      for (let i = 1; i < mergedIntervals.length; i++) {
+        const startMs = mergedIntervals[i - 1].end;
+        const endMs = mergedIntervals[i].start;
+        const durationMs = endMs - startMs;
+        if (durationMs < thresholdMs) continue;
+
+        const range = formatHHMM(startMs) + ' – ' + formatHHMM(endMs);
+        blocks.push({
+          label: 'Away',
+          catKey: '__away__',
+          range,
+          color: '#495161',
+          tooltip: 'Away\n' + formatDuration(durationMs / 1000) + '\n' + range,
+          isAway: true,
+          startMs,
+          endMs,
+        });
+      }
+      return blocks;
+    },
+
     timelineCanvas(): { blocks: any[]; hours: any[]; nowPx: number | null; totalHeight: number; canvasStartMs: number } {
       const dayStart = moment(this.selectedDate).startOf('day').valueOf();
       const SCALE = HOUR_PX / 3600000; // px per millisecond
-      const blocks_raw = this.timeline as any[];
+      const blocks_raw = [
+        ...(this.timeline as any[]),
+        ...(this.awayTimelineBlocks as any[]),
+      ].sort((a: any, b: any) => a.startMs - b.startMs);
 
       // Default visible window: 8am–10pm
       const default8am = moment(this.selectedDate).hour(8).startOf('hour').valueOf();
@@ -2084,6 +2143,7 @@ export default {
     },
 
     onTimelineBlockClick(block: any) {
+      if (block.isAway) return;
       // Switch to chrono view and scroll to this block's time
       this.setViewMode('chrono');
       this.$nextTick(() => {
@@ -3148,6 +3208,11 @@ export default {
   transition: color 0.15s, border-color 0.15s;
   &:hover { color: #fff; border-color: var(--border-hover); }
   &:disabled { opacity: 0.3; cursor: not-allowed; }
+}
+
+.chronio-away-toggle.active {
+  border-color: rgba(119, 130, 154, 0.8);
+  color: var(--text);
 }
 
 .chronio-chip {
