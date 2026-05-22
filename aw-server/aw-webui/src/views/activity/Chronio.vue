@@ -587,6 +587,7 @@ const SHORTCUT_REFERENCE_ROWS = [
   { keys: 'Space', action: 'Expand or collapse selected row' },
   { keys: '1–9', action: 'Assign selection to sidebar category' },
   { keys: '/ / ⌘F', action: 'Focus search' },
+  { keys: 'Shift+P', action: 'Pause / resume screenshots' },
   { keys: 'Escape', action: 'Clear filters and selection' },
   { keys: '?', action: 'Show this reference' },
 ];
@@ -2734,6 +2735,7 @@ export default {
       else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); this.setViewMode('apps'); }
       else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); this.setViewMode('chrono'); }
       else if (e.key === '/') { e.preventDefault(); this.focusSearch(); }
+      else if (e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); this.toggleScreenshotCapture(); }
       else if (e.key === '?') { e.preventDefault(); this.openShortcutReference(); }
       else if (e.key === 'Escape') { e.preventDefault(); this.clearShortcutFiltersAndSelection(); }
       else if ((e.key === ' ' || e.key === 'Spacebar') && this.toggleSelectedActivityExpansion()) {
@@ -2946,6 +2948,16 @@ export default {
         const ts = moment(event.timestamp);
         return ts.isBefore(start) || !ts.isBefore(end);
       });
+    },
+
+    async toggleScreenshotCapture() {
+      const paused = !this.settingsStore.chronioScreenshotCapturePaused;
+      try {
+        await this.settingsStore.update({ chronioScreenshotCapturePaused: paused });
+        this.showToast('Screenshot capture ' + (paused ? 'paused' : 'resumed'));
+      } catch (error) {
+        this.showToast('Screenshot capture setting could not be saved');
+      }
     },
 
     routePath(): string {
