@@ -51,6 +51,15 @@ export function chronioEventsForDate(events: IEvent[], date: string): IEvent[] {
   });
 }
 
+export function chronioEventsByDate(events: IEvent[]): Record<string, IEvent[]> {
+  return events.reduce((eventsByDate: Record<string, IEvent[]>, event: IEvent) => {
+    const date = moment(event.timestamp).format('YYYY-MM-DD');
+    if (!eventsByDate[date]) eventsByDate[date] = [];
+    eventsByDate[date].push(event);
+    return eventsByDate;
+  }, {});
+}
+
 export function summarizeChronioDates(
   events: IEvent[],
   categoryForEvent: (event: IEvent) => string[]

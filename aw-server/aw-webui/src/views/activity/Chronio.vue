@@ -60,8 +60,10 @@ div.chronio-view
         ) ×
       button.chronio-nav-btn(@click="$router.push('/chronio/settings')" title="Settings") Settings
 
-  div.chronio-loading(v-if="loading")
-    span Loading activity data&hellip;
+  div.chronio-loading(v-if="loading" :class="{'chronio-loading--month': selectedPeriod === 'month'}")
+    span Loading {{ selectedPeriod === 'month' ? periodDisplay + ' summary' : 'activity data' }}&hellip;
+    .month-loading-grid(v-if="selectedPeriod === 'month'" aria-hidden="true")
+      span(v-for="cell in 35" :key="'month-loading-' + cell")
 
   .chronio-body(v-else :class="'period-' + selectedPeriod")
 
@@ -548,10 +550,11 @@ import { getClient } from '~/util/awclient';
 import { extractBrowserSubContext, supportsBrowserSubContext } from '~/util/browserSubContext';
 import {
   buildChronioExportRows,
+  chronioEventsByDate,
   chronioEventsForDate,
   chronioManualRuleMatches,
   chronioPeriodStart,
-  classifyChronioCategory,
+  compileChronioCategoryRegexes,
   matchChronioManualCategory,
   matchChronioRegexCategory,
   normalizeChronioTitleForMatching,
@@ -740,6 +743,7 @@ export default {
       refreshTimer: null as any,
       // #35: guard to skip silent refresh if a full refresh is already in flight
       isRefreshing: false as boolean,
+      periodEventsCache: {} as Record<string, { windowEvents: any[]; afkEvents: any[] }>,
       // #78: toast notifications for drag-to-categorize
       toasts: [] as { id: number; message: string; undo: (() => void) | null; timer: any }[],
       nextToastId: 0 as number,
@@ -827,6 +831,18 @@ export default {
     // Full-day AFK-filtered window events (no segment restriction)
     activeWindowEvents(): any[] {
       return this.activeEventsFor(this.windowEvents, this.afkEvents);
+    },
+
+    activeWindowEventsByDate(): Record<string, any[]> {
+      return chronioEventsByDate(this.activeWindowEvents as any[]);
+    },
+
+    categoryRegexes(): [any, RegExp][] {
+      return compileChronioCategoryRegexes((this.categoryStore as any).classes);
+    },
+
+    scopedActiveWindowEventsByDate(): Record<string, any[]> {
+      return chronioEventsByDate(this.scopedActiveWindowEvents as any[]);
     },
 
     afkStatus(): 'active' | 'no-data' {
@@ -1401,7 +1417,7 @@ export default {
       return Array.from({ length: 7 }, (_, index) => {
         const day = start.clone().add(index, 'days');
         const date = day.format('YYYY-MM-DD');
-        const events = this.eventsForDate(this.scopedActiveWindowEvents as any[], date);
+        const events = this.scopedActiveWindowEventsByDate[date] || [];
         const timeline = this.buildTimeline(events);
         return {
           activeEventCount: events.length,
@@ -1438,7 +1454,7 @@ export default {
       const cursor = gridStart.clone();
       while (cursor.isSameOrBefore(gridEnd, 'day')) {
         const date = cursor.format('YYYY-MM-DD');
-        const events = this.eventsForDate(this.activeWindowEvents as any[], date);
+        const events = this.activeWindowEventsByDate[date] || [];
         const duration = summariesByDate[date]?.trackedSeconds || 0;
         days.push({
           barColor: this.scoreForEvents(events) < 0 ? '#ef4444' : '#22c55e',
@@ -1729,20 +1745,31 @@ export default {
 
     activeEventsFor(windowEvents: any[], afkEvents: any[]): any[] {
       const events = (windowEvents || []).filter((event: any) => !this.shouldHideFromChronio(event));
-      const intervals = this.notAfkIntervalsFor(afkEvents);
+      const intervals = this.notAfkIntervalsFor(afkEvents)
+        .sort((left: { start: number }, right: { start: number }) => left.start - right.start);
       // Fail-open: if no AFK data is available for this day, preserve tracked window events.
       if (intervals.length === 0) {
         return events.filter((event: any) => !SYSTEM_PROCESS_BLOCKLIST.has(event.data?.app));
       }
 
       const segments: any[] = [];
-      for (const event of events) {
+      let intervalIndex = 0;
+      const sortedEvents = [...events].sort(
+        (left: any, right: any) => moment(left.timestamp).valueOf() - moment(right.timestamp).valueOf()
+      );
+      for (const event of sortedEvents) {
         if (SYSTEM_PROCESS_BLOCKLIST.has(event.data?.app)) continue;
         const eventStart = moment(event.timestamp).valueOf();
         const eventEnd = eventStart + event.duration * 1000;
         if (eventEnd <= eventStart) continue;
 
-        for (const interval of intervals) {
+        while (intervalIndex < intervals.length && intervals[intervalIndex].end <= eventStart) {
+          intervalIndex++;
+        }
+
+        for (let index = intervalIndex; index < intervals.length; index++) {
+          const interval = intervals[index];
+          if (interval.start >= eventEnd) break;
           const start = Math.max(eventStart, interval.start);
           const end = Math.min(eventEnd, interval.end);
           const durationMs = end - start;
@@ -2294,7 +2321,9 @@ export default {
 
     classifyEventCategory(e: any): string[] {
       const categories: any[] = (this.categoryStore as any).classes;
-      return classifyChronioCategory(this.eventIdentity(e), categories);
+      const identity = this.eventIdentity(e);
+      return this.matchManualCategory(identity, categories) ||
+        this.matchRegexCategory(identity.matchText, this.categoryRegexes as [any, RegExp][]);
     },
 
     // Strip browser name suffix from window titles for better readability
@@ -3052,19 +3081,16 @@ export default {
         .subtract(1, this.selectedPeriod)
         .format('YYYY-MM-DD');
       this.syncRoute();
-      this.refresh();
     },
     nextDay() {
       if (this.isToday) return;
       this.selectedDate = moment(this.selectedDate).add(1, this.selectedPeriod).format('YYYY-MM-DD');
       this.syncRoute();
-      this.refresh();
     },
     onDateChange(dateStr: string) {
       this.selectedDate = dateStr;
       this.showDatePicker = false;
       this.syncRoute();
-      this.refresh();
     },
 
     setPeriod(period: 'day' | 'week' | 'month') {
@@ -3072,7 +3098,6 @@ export default {
       if (this.selectedPeriod === period) return;
       this.selectedPeriod = period;
       this.syncRoute();
-      this.refresh();
     },
 
     selectDay(date: string) {
@@ -3080,7 +3105,6 @@ export default {
       this.selectedPeriod = 'day';
       this.selectedDate = date;
       this.syncRoute();
-      this.refresh();
     },
 
     openWeeklyReport() {
@@ -3089,7 +3113,6 @@ export default {
       if (this.selectedPeriod === 'week') return;
       this.selectedPeriod = 'week';
       this.syncRoute();
-      this.refresh();
     },
 
     closeReport() {
@@ -3191,14 +3214,39 @@ export default {
         const startDate = start.toDate();
         const endDate = end.toDate();
         const params = { start: startDate, end: endDate, limit: -1 };
+        const cacheKey = [
+          start.toISOString(),
+          end.toISOString(),
+          allWindowBuckets.join(','),
+          allAfkBuckets.join(','),
+        ].join('|');
+        const cacheable = end.isSameOrBefore(moment().startOf('day'));
+        const cachedEvents = cacheable ? this.periodEventsCache[cacheKey] : null;
+
+        // Merge and sort by timestamp descending
+        const mergeEvents = (arrays: any[][]) =>
+          arrays.flat().sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
         // Fetch from all same-machine buckets in parallel and merge
-        const windowEvtArrays = await Promise.all(
-          allWindowBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
-        );
-        const afkEvtArrays = await Promise.all(
-          allAfkBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
-        );
+        let windowEvents: any[] = cachedEvents?.windowEvents || [];
+        let afkEvents: any[] = cachedEvents?.afkEvents || [];
+        if (!cachedEvents) {
+          const [windowEvtArrays, afkEvtArrays] = await Promise.all([
+            Promise.all(
+              allWindowBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
+            ),
+            Promise.all(
+              allAfkBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
+            ),
+          ]);
+          windowEvents = mergeEvents(windowEvtArrays);
+          afkEvents = mergeEvents(afkEvtArrays);
+          if (cacheable) {
+            this.periodEventsCache[cacheKey] = { windowEvents, afkEvents };
+            const cachedKeys = Object.keys(this.periodEventsCache);
+            if (cachedKeys.length > 8) delete this.periodEventsCache[cachedKeys[0]];
+          }
+        }
         this.screenshotLoading = this.selectedPeriod === 'day' && allScreenshotBuckets.length > 0;
         const screenshotEvtArrays = this.selectedPeriod === 'day'
           ? await Promise.all(allScreenshotBuckets.map(async (bucketId: string) => {
@@ -3207,12 +3255,8 @@ export default {
             }))
           : [];
 
-        // Merge and sort by timestamp descending
-        const mergeEvents = (arrays: any[][]) =>
-          arrays.flat().sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-        this.windowEvents = mergeEvents(windowEvtArrays);
-        this.afkEvents = mergeEvents(afkEvtArrays);
+        this.windowEvents = windowEvents;
+        this.afkEvents = afkEvents;
         this.loadCategorySparklines();
         this.screenshotEvents = mergeEvents(screenshotEvtArrays);
         this.screenshotLoading = false;
@@ -3540,6 +3584,39 @@ export default {
   flex: 1;
   color: var(--muted);
   font-size: 14px;
+}
+
+.chronio-loading--month {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 16px;
+  justify-content: flex-start;
+  padding: 26px 18px;
+}
+
+.month-loading-grid {
+  display: grid;
+  flex: 1;
+  gap: 8px;
+  grid-auto-rows: minmax(74px, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.month-loading-grid span {
+  background: linear-gradient(
+    110deg,
+    rgba(255, 255, 255, 0.035) 20%,
+    rgba(255, 255, 255, 0.095) 38%,
+    rgba(255, 255, 255, 0.035) 56%
+  );
+  background-size: 220% 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  animation: month-loading-sweep 1.4s linear infinite;
+}
+
+@keyframes month-loading-sweep {
+  to { background-position-x: -220%; }
 }
 
 /* ── BODY: 3-COLUMN LAYOUT ───────────────────────────────────────── */
