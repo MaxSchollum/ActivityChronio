@@ -500,7 +500,6 @@ div.chronio-view
 import moment from 'moment';
 import Fuse from 'fuse.js';
 import _ from 'lodash';
-import Papa from 'papaparse';
 import { useActivityStore } from '~/stores/activity';
 import { useBucketsStore } from '~/stores/buckets';
 import { useCategoryStore } from '~/stores/categories';
@@ -508,6 +507,18 @@ import { useSettingsStore } from '~/stores/settings';
 import { get_today_with_offset } from '~/util/time';
 import { getColorFromString } from '~/util/color';
 import { getClient } from '~/util/awclient';
+import {
+  buildChronioExportRows,
+  chronioEventsForDate,
+  chronioManualRuleMatches,
+  chronioPeriodStart,
+  classifyChronioCategory,
+  matchChronioManualCategory,
+  matchChronioRegexCategory,
+  normalizeChronioTitleForMatching,
+  serializeChronioExportRows,
+  summarizeChronioDates,
+} from '~/util/chronio';
 import ChronioDay from './ChronioDay.vue';
 import ChronioMonth from './ChronioMonth.vue';
 import ChronioReport from './ChronioReport.vue';
@@ -750,21 +761,12 @@ export default {
     },
 
     exportRows(): any[] {
-      return [...(this.activeWindowEvents as any[])]
-        .sort((a: any, b: any) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf())
-        .map((event: any) => {
-          const category = this.classifyEventCategory(event);
-          const identity = this.eventIdentity(event);
-          return {
-            timestamp: moment(event.timestamp).toISOString(),
-            app: identity.app,
-            title: identity.title,
-            category: category.join(' > '),
-            durationSeconds: event.duration || 0,
-            productivityScore:
-              (this.categoryStore as any).get_category_score(category) || 0,
-          };
-        });
+      return buildChronioExportRows(
+        this.activeWindowEvents as any[],
+        (event: any) => this.eventIdentity(event),
+        (event: any) => this.classifyEventCategory(event),
+        (category: string[]) => (this.categoryStore as any).get_category_score(category)
+      );
     },
 
     // AFK intervals for the day
@@ -1294,15 +1296,18 @@ export default {
       const gridStart = monthStart.clone().startOf('isoWeek');
       const monthEnd = monthStart.clone().endOf('month');
       const gridEnd = monthEnd.clone().endOf('isoWeek');
+      const summaries = summarizeChronioDates(
+        this.activeWindowEvents as any[],
+        (event: any) => this.classifyEventCategory(event)
+      );
+      const summariesByDate = Object.fromEntries(
+        summaries.map((summary: any) => [summary.date, summary])
+      );
       const maxDuration = Math.max(
         1,
         ...Array.from({ length: monthStart.daysInMonth() }, (_, index) =>
-          this.sumDuration(
-            this.eventsForDate(
-              this.activeWindowEvents as any[],
-              monthStart.clone().add(index, 'days').format('YYYY-MM-DD')
-            )
-          )
+          summariesByDate[monthStart.clone().add(index, 'days').format('YYYY-MM-DD')]
+            ?.trackedSeconds || 0
         )
       );
       const days: any[] = [];
@@ -1310,7 +1315,7 @@ export default {
       while (cursor.isSameOrBefore(gridEnd, 'day')) {
         const date = cursor.format('YYYY-MM-DD');
         const events = this.eventsForDate(this.activeWindowEvents as any[], date);
-        const duration = this.sumDuration(events);
+        const duration = summariesByDate[date]?.trackedSeconds || 0;
         days.push({
           barColor: this.scoreForEvents(events) < 0 ? '#ef4444' : '#22c55e',
           date,
@@ -1705,14 +1710,7 @@ export default {
     },
 
     periodStartFor(date: any, period: 'day' | 'week' | 'month'): any {
-      const start = moment(date);
-      if (period === 'month') return start.startOf('month');
-      if (period === 'week') {
-        const weekStart = this.settingsStore.startOfWeek || 'Monday';
-        const startDay = weekStart === 'Saturday' ? 6 : weekStart === 'Sunday' ? 0 : 1;
-        return start.startOf('day').subtract((start.day() - startDay + 7) % 7, 'days');
-      }
-      return start.startOf('day');
+      return chronioPeriodStart(date, period, this.settingsStore.startOfWeek || 'Monday');
     },
 
     sumDuration(events: any[]): number {
@@ -1720,12 +1718,7 @@ export default {
     },
 
     eventsForDate(events: any[], date: string): any[] {
-      const start = moment(date).startOf('day');
-      const end = start.clone().add(1, 'day');
-      return events.filter((event: any) => {
-        const timestamp = moment(event.timestamp);
-        return timestamp.isSameOrAfter(start) && timestamp.isBefore(end);
-      });
+      return chronioEventsForDate(events, date);
     },
 
     scoreForEvents(events: any[]): number {
@@ -1883,9 +1876,7 @@ export default {
     },
 
     normalizeTitleForMatching(title: string): string {
-      return (title || '')
-        .replace(/^\s*(?:\(\d+\)|\[\d+\]|\d+)\s+/, '')
-        .trim();
+      return normalizeChronioTitleForMatching(title);
     },
 
     isBrowserApp(app: string): boolean {
@@ -1993,28 +1984,15 @@ export default {
     },
 
     matchRegexCategory(str: string, regexes: [any, RegExp][]): string[] {
-      const matches = regexes.filter(([, re]: [any, RegExp]) => re.test(str));
-      return matches.length > 0
-        ? (_.maxBy(matches, ([c]: [any, RegExp]) => (c as any).name.length) as any)[0].name
-        : ['Uncategorized'];
+      return matchChronioRegexCategory(str, regexes);
     },
 
     manualRuleMatches(identity: any, rule: any): boolean {
-      if (!rule) return false;
-      const app = (rule.app || '').toLowerCase();
-      const title = this.normalizeTitleForMatching(rule.title || rule.rawTitle || '').toLowerCase();
-      if (rule.type === 'app') return app && identity.app.toLowerCase() === app;
-      return app && title &&
-        identity.app.toLowerCase() === app &&
-        this.normalizeTitleForMatching(identity.title || '').toLowerCase() === title;
+      return chronioManualRuleMatches(identity, rule);
     },
 
     matchManualCategory(identity: any, categories: any[]): string[] | null {
-      const matches = categories.filter((c: any) =>
-        (c.data?.chronioManualRules || []).some((rule: any) => this.manualRuleMatches(identity, rule))
-      );
-      if (!matches.length) return null;
-      return (_.maxBy(matches, (c: any) => c.name.length) as any).name;
+      return matchChronioManualCategory(identity, categories);
     },
 
     manualRuleKey(rule: any): string {
@@ -2045,20 +2023,7 @@ export default {
 
     classifyEventCategory(e: any): string[] {
       const categories: any[] = (this.categoryStore as any).classes;
-      const identity = this.eventIdentity(e);
-      const manual = this.matchManualCategory(identity, categories);
-      if (manual) return manual;
-      const regexes: [any, RegExp][] = categories
-        .filter((c: any) => c.rule?.type === 'regex' && c.rule.regex)
-        .flatMap((c: any) => {
-          try {
-            const pattern = c.rule.regex.replace(/\(\?[imsx]+\)/g, '');
-            return [[c, new RegExp(pattern, (c.rule.ignore_case ? 'i' : '') + 'm')]];
-          } catch (err) {
-            return [];
-          }
-        });
-      return this.matchRegexCategory(identity.matchText, regexes);
+      return classifyChronioCategory(this.eventIdentity(e), categories);
     },
 
     // Strip browser name suffix from window titles for better readability
@@ -2839,23 +2804,7 @@ export default {
     },
 
     exportCsv(): string {
-      const columns = [
-        'timestamp',
-        'app',
-        'title',
-        'category',
-        'duration (seconds)',
-        'productivity score',
-      ];
-      const rows = (this.exportRows as any[]).map((row: any) => [
-        row.timestamp,
-        row.app,
-        row.title,
-        row.category,
-        row.durationSeconds,
-        row.productivityScore,
-      ]);
-      return Papa.unparse(rows, { columns });
+      return serializeChronioExportRows(this.exportRows as any[], 'csv');
     },
 
     exportPeriod(format: 'csv' | 'json') {
@@ -2865,7 +2814,7 @@ export default {
       const content =
         format === 'csv'
           ? this.exportCsv()
-          : JSON.stringify(this.exportRows, null, 2);
+          : serializeChronioExportRows(this.exportRows as any[], 'json');
       const type = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
       const url = URL.createObjectURL(new Blob([content], { type }));
       const link = document.createElement('a');
