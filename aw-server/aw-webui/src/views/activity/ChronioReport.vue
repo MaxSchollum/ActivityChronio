@@ -1,9 +1,5 @@
 <template lang="pug">
 .chronio-report
-  .report-toolbar
-    button.report-command(@click="$emit('close')") Back to activities
-    button.report-command.primary(@click="printReport") Print
-
   article.report-page
     header.report-header
       p Weekly Report
@@ -191,17 +187,13 @@ export default {
     formatDuration(seconds: number): string {
       return formatDuration(seconds);
     },
-
-    printReport() {
-      window.print();
-    },
   },
 };
 </script>
 
 <style lang="scss" scoped>
 .chronio-report {
-  background: #11141c;
+  background: transparent;
   color: #e9eefb;
   display: flex;
   flex: 1;
@@ -211,44 +203,16 @@ export default {
   padding: 18px;
 }
 
-.report-toolbar {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  margin: 0 auto 14px;
-  max-width: 920px;
-  width: 100%;
-}
-
-.report-command {
-  background: rgba(20, 24, 33, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  color: #e9eefb;
-  cursor: pointer;
-  font-size: 12px;
-  min-height: 32px;
-  padding: 0 12px;
-}
-
-.report-command.primary {
-  background: #4b8bff;
-  border-color: #4b8bff;
-  color: #07152f;
-  font-weight: 600;
-}
-
 .report-page {
-  background: #fff;
+  background: rgba(20, 24, 33, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 6px;
   box-sizing: border-box;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
-  color: #172033;
+  color: #e9eefb;
   display: grid;
   gap: 22px;
-  margin: 0 auto;
-  max-width: 920px;
-  padding: 42px;
+  min-height: 100%;
+  padding: 30px;
   width: 100%;
 }
 
@@ -261,7 +225,7 @@ export default {
 }
 
 .report-header {
-  border-bottom: 1px solid #d6ddea;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   display: grid;
   gap: 5px;
   padding-bottom: 18px;
@@ -281,14 +245,14 @@ export default {
 .report-header span,
 .report-metric span,
 .trend-label span {
-  color: #5c667a;
+  color: #9aa4b2;
   font-size: 12px;
 }
 
 .report-empty {
-  border: 1px dashed #bdc7da;
+  border: 1px dashed rgba(255, 255, 255, 0.15);
   border-radius: 6px;
-  color: #5c667a;
+  color: #9aa4b2;
   padding: 36px 18px;
   text-align: center;
 }
@@ -300,7 +264,8 @@ export default {
 }
 
 .report-metric {
-  border: 1px solid #d6ddea;
+  background: rgba(22, 26, 36, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 6px;
   display: grid;
   gap: 5px;
@@ -348,13 +313,13 @@ export default {
 }
 
 .trend-list em {
-  color: #5c667a;
+  color: #9aa4b2;
   font-style: normal;
   text-align: right;
 }
 
 .trend-meter {
-  background: #e8edf7;
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 4px;
   height: 9px;
   overflow: hidden;
@@ -375,7 +340,7 @@ export default {
 
 .summary-list li {
   align-items: baseline;
-  border-bottom: 1px solid #e7ecf5;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   gap: 10px;
   justify-content: space-between;
@@ -412,13 +377,12 @@ export default {
     padding: 0;
   }
 
-  .report-toolbar {
-    display: none;
-  }
-
   .report-page {
+    background: #fff;
+    border: 0;
     border-radius: 0;
     box-shadow: none;
+    color: #172033;
     max-width: none;
     min-height: 100vh;
     padding: 0;
