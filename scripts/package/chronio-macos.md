@@ -30,14 +30,27 @@ problem without helping macOS distribution.
 
 ## Local Build
 
-Run the unsigned package build on macOS:
+Run the unsigned package build on macOS with the repository Python packaging
+toolchain installed. The V2 handoff artifact was built with Python 3.9:
 
 ```sh
+poetry install --no-root
+make build AW_EXTRAS=true SKIP_SERVER_RUST=true
 make dist/Chronio.dmg
 ```
 
 That target builds `Chronio.app` with PyInstaller and then builds a DMG with a
-drag-to-Applications symlink. The produced local app and DMG are unsigned.
+drag-to-Applications symlink. The produced local app and DMG are unsigned:
+
+| Artifact | Path |
+| --- | --- |
+| App bundle | `dist/Chronio.app` |
+| Disk image | `dist/Chronio.dmg` |
+
+Use `localhost:5600` for daily frontend iteration and normal Chronio UI QA.
+Use the packaged app for issue #16 validation, macOS permission prompts,
+watcher startup, and install behavior because those flows depend on the app
+bundle identity.
 
 ## Permission Regrant Test Plan
 
@@ -70,6 +83,6 @@ The current CI script only attempts the signing/notarization branch when Apple
 credentials are present. Without them, build output is useful for local
 packaging tests but it must not be described as signed or notarized.
 
-Sparkle auto-updates, login item registration, a Chronio bundle icon, a final
-DMG background, and signed/notarized install validation remain later slices of
-issue #16.
+Signed/notarized install validation remains blocked until the Apple Developer
+inputs above are available. The local unsigned package path is the QA artifact
+until that release path can be verified.

@@ -2,6 +2,8 @@
 
 .FORCE: ;
 
+LOGO_DIR := $(firstword $(wildcard media/logo ../../aw-qt/media/logo))
+
 # This is to disable check for new release in aw-webui for aw-android
 ifdef ON_ANDROID
 # The following flag will pass --android as a command line argument to vue-cli-service
@@ -25,7 +27,7 @@ build-vite: prebuild
 dev-vite: prebuild
 	npx vite
 
-static/logo.%: media/logo/logo.%
+static/logo.%: $(LOGO_DIR)/logo.%
 	@mkdir -p static
 	cp $< $@
 

@@ -35,7 +35,9 @@ state immediately before the `master` merge:
 | `cd aw-server && poetry run pytest tests/test_server.py -k chronio_screenshot` | Passes: screenshot image route, traversal rejection, and delete-hour route |
 | `python3 -m py_compile aw-qt/aw_qt/config.py aw.spec aw-watcher-screenshot/aw_watcher_screenshot/capture.py aw-watcher-screenshot/aw_watcher_screenshot/watcher.py` | Passes |
 | Browser check against local test server | Settings shows screenshot interval, quality, storage, and cleanup controls; Day view shows filmstrip empty state; `Shift+P` shows pause/resume toast; stale Stats "Coming in V2" tooltip removed |
-| `make dist/Chronio.app` | Blocked on this machine: `pyinstaller: command not found` before artifact creation |
+| `python3.9 -m venv .packaging-venv && source .packaging-venv/bin/activate && poetry install --no-root --no-interaction` | Installs the local unsigned packaging toolchain |
+| `source .packaging-venv/bin/activate && make build AW_EXTRAS=true SKIP_SERVER_RUST=true` | Passes and prepares built modules for PyInstaller |
+| `source .packaging-venv/bin/activate && make dist/Chronio.dmg` | Produces unsigned `dist/Chronio.app` and `dist/Chronio.dmg` |
 
 ## QA Focus
 
@@ -51,17 +53,18 @@ state immediately before the `master` merge:
   `~/Library/Application Support/ActivityChronio/screenshots/YYYY-MM-DD/`.
 - Confirm Day filmstrip ordering, lightbox timestamp, timeline markers, and
   delete-hour removing both screenshot files and bucket events.
-- Run the packaged-app path once the packaging toolchain is installed:
-  `make dist/Chronio.app` or `make dist/Chronio.dmg`.
+- Use `localhost:5600` for normal Chronio UI regression checks.
+- Use the packaged `dist/Chronio.app` or `dist/Chronio.dmg` for issue #16
+  checks: install behavior, macOS permission prompts, helper startup, and
+  watcher autostart under the Chronio app identity.
 
 ## Residual Risks
 
 | Risk | Severity | Owner |
 | --- | --- | --- |
-| Local package artifact was not produced in this handoff because PyInstaller is missing | Medium | Release verification |
 | Signing and notarization require Apple Developer credentials | High | Release engineering |
 | Screenshot capture depends on macOS Screen Recording permission | High | QA |
-| Real screenshot capture, permission-denied UX, and packaged watcher autostart need a macOS package run | Medium | QA |
+| Packaged permission-denied UX and watcher autostart still need an interactive macOS run | Medium | QA |
 | Large-range advanced search and trends should be spot-checked with a mature local dataset | Medium | QA |
 
 ## Deliberate Deferrals
