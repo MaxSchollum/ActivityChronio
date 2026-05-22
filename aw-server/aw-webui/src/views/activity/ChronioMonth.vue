@@ -1,22 +1,31 @@
 <template lang="pug">
 .chronio-month
   header.month-header
-    h1 {{ label }}
-    p Click a day to open the detailed daily review.
+    .month-header-copy
+      h1 {{ label }}
+      p Click a day to open the detailed daily review.
+    .month-legend(aria-label="Productivity bar legend")
+      span
+        i.month-legend-dot.month-legend-dot--productive
+        | Productive
+      span
+        i.month-legend-dot.month-legend-dot--distracting
+        | Distracting
   .month-weekdays
     span(v-for="weekday in weekdays" :key="weekday") {{ weekday }}
   .month-grid
     button.month-day(
       v-for="day in days"
       :key="day.key"
-      :class="{'month-day--muted': !day.inMonth, 'month-day--today': day.isToday}"
+      :class="{'month-day--muted': !day.inMonth, 'month-day--today': day.isToday, 'month-day--empty': !day.trackedTime}"
       :disabled="!day.inMonth"
       @click="day.inMonth && $emit('select-day', day.date)"
     )
       span {{ day.day }}
-      em(:title="day.productivityTitle") {{ day.trackedTime }}
+      em(:class="{'month-day-time--empty': !day.trackedTime}" :title="day.productivityTitle")
+        | {{ day.trackedTime || (day.inMonth ? 'No activity' : '') }}
       .month-bar(:title="day.productivityTitle")
-        i(:style="{width: day.productiveWidth, background: day.barColor}")
+        i(v-if="day.trackedTime" :style="{width: day.productiveWidth, background: day.barColor}")
 </template>
 
 <script lang="ts">
@@ -50,6 +59,14 @@ export default {
   padding: 18px;
 }
 
+.month-header {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+}
+
 .month-header h1 {
   font-size: 18px;
   letter-spacing: 0;
@@ -60,6 +77,38 @@ export default {
   color: var(--muted);
   font-size: 12px;
   margin: 0;
+}
+
+.month-legend {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 11px;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.month-legend span {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.month-legend-dot {
+  border-radius: 999px;
+  display: inline-block;
+  height: 8px;
+  width: 8px;
+}
+
+.month-legend-dot--productive {
+  background: #22c55e;
+}
+
+.month-legend-dot--distracting {
+  background: #ef4444;
 }
 
 .month-grid,
@@ -115,6 +164,11 @@ export default {
   border-color: rgba(75, 139, 255, 0.7);
 }
 
+.month-day--empty:not(.month-day--muted) .month-bar {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+}
+
 .month-day span {
   font-size: 13px;
   font-weight: 600;
@@ -122,9 +176,15 @@ export default {
 
 .month-day em {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 600;
   font-style: normal;
-  min-height: 14px;
+  min-height: 18px;
+}
+
+.month-day .month-day-time--empty {
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .month-bar {
