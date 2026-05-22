@@ -391,13 +391,26 @@ div.chronio-view
                   draggable="true"
                   :data-row-key="titleRowKey(catNode.catKey, appNode.app, t.title)"
                   :class="{'row-selected': selectedRowKeys[titleRowKey(catNode.catKey, appNode.app, t.title)]}"
-                  @click="onActivityRowClick(titleRowKey(catNode.catKey, appNode.app, t.title), {type:'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title}, $event)"
+                  @click="onContextRowClick(catNode.catKey, appNode.app, t, $event)"
                   @dragstart="onDragStartTitle(appNode.app, t, $event, titleRowKey(catNode.catKey, appNode.app, t.title))"
                   @dragend="onDragEnd"
                 )
                   .act-indent2
+                  span.act-expand(v-if="t.events && t.events.length" @click.stop="toggleExpandContext(catNode.catKey + '/' + appNode.app + '/' + t.title)") {{ expandedContexts[catNode.catKey + '/' + appNode.app + '/' + t.title] ? '▾' : '▸' }}
+                  span.act-expand-spacer(v-else)
                   span.act-title(:title="t.title") {{ t.title }}
                   span.act-dur {{ formatDuration(t.duration) }}
+                template(v-if="t.events && expandedContexts[catNode.catKey + '/' + appNode.app + '/' + t.title]" v-for="e in t.events" :key="e.timestamp + (e.data && e.data.title || '')")
+                  .act-row.act-row--context-event(
+                    draggable="true"
+                    @click="onActivityRowClick('', {type:'title', app: appNode.app, title: displayEventTitle(e), rawTitle: e.data && e.data.title || ''}, $event)"
+                    @dragstart="onDragStartEvent(e, $event)"
+                    @dragend="onDragEnd"
+                  )
+                    .act-indent3
+                    span.act-title(:title="displayEventTitle(e)") {{ displayEventTitle(e) }}
+                    span.act-time {{ formatHHMM(e.timestamp) }}
+                    span.act-dur {{ formatDuration(e.duration) }}
 
         //- APPS VIEW (#40) — flat app list sorted by time
         template(v-else-if="viewMode === 'apps'")
@@ -528,6 +541,7 @@ import { useSettingsStore } from '~/stores/settings';
 import { get_today_with_offset } from '~/util/time';
 import { getColorFromString } from '~/util/color';
 import { getClient } from '~/util/awclient';
+import { extractBrowserSubContext, supportsBrowserSubContext } from '~/util/browserSubContext';
 import ChronioDay from './ChronioDay.vue';
 import ChronioMonth from './ChronioMonth.vue';
 import ChronioReport from './ChronioReport.vue';
@@ -667,6 +681,7 @@ export default {
       // expand/filter state
       expandedCats: {} as Record<string, boolean>,
       expandedApps: {} as Record<string, boolean>,
+      expandedContexts: {} as Record<string, boolean>,
       expandedTimelineBlocks: {} as Record<string, boolean>,
       sidebarExpanded: {} as Record<string, boolean>,
       selectedCatFilter: null as string | null,
@@ -992,9 +1007,11 @@ export default {
         }
         catMap[catKey].duration += dur;
 
+        const hasSubCtx = supportsBrowserSubContext(app);
         if (!catMap[catKey].apps[app]) {
           catMap[catKey].apps[app] = {
             app,
+            hasSubContext: hasSubCtx,
             color: catMap[catKey].color,
             colorTitle: 'Category: ' + catName.join(' > '),
             duration: 0,
@@ -1003,9 +1020,17 @@ export default {
         }
         catMap[catKey].apps[app].duration += dur;
         if (!catMap[catKey].apps[app].titles[title]) {
-          catMap[catKey].apps[app].titles[title] = { title, rawTitle, duration: 0 };
+          catMap[catKey].apps[app].titles[title] = {
+            title,
+            rawTitle,
+            duration: 0,
+            events: hasSubCtx ? [] as any[] : null,
+          };
         }
         catMap[catKey].apps[app].titles[title].duration += dur;
+        if (hasSubCtx) {
+          catMap[catKey].apps[app].titles[title].events.push(e);
+        }
       }
 
       return Object.values(catMap)
@@ -1255,10 +1280,23 @@ export default {
             });
             if (this.expandedApps[catNode.catKey + '/' + appNode.app]) {
               for (const t of appNode.titles) {
+                const ctxKey = catNode.catKey + '/' + appNode.app + '/' + t.title;
                 result.push({
                   key: this.titleRowKey(catNode.catKey, appNode.app, t.title),
                   payload: { type: 'title', app: appNode.app, title: t.title, rawTitle: t.rawTitle || t.title },
+                  expansion: t.events && t.events.length
+                    ? { type: 'ctx', key: ctxKey }
+                    : undefined,
                 });
+                if (t.events && t.events.length && this.expandedContexts[ctxKey]) {
+                  for (const e of t.events) {
+                    const identity = this.eventIdentity(e);
+                    result.push({
+                      key: '',
+                      payload: { type: 'title', app: appNode.app, title: identity.title, rawTitle: e.data?.title || '' },
+                    });
+                  }
+                }
               }
             }
           }
@@ -2118,14 +2156,18 @@ export default {
       if (this.isBrowserApp(rawApp)) {
         const site = this.browserSiteFor(readableTitle, url);
         if (site) {
-          const title = site.pageTitle && site.pageTitle !== site.label ? site.pageTitle : normalizedTitle;
+          const contextTitle = extractBrowserSubContext(site.label, normalizedTitle);
+          const pageTitle = site.pageTitle && site.pageTitle !== site.label
+            ? site.pageTitle
+            : normalizedTitle;
+          const title = contextTitle || (supportsBrowserSubContext(site.label) ? site.label : pageTitle);
           return {
             rawApp,
             app: site.label,
             title: title || site.label,
             rawTitle,
             url,
-            matchText: [site.label, title, normalizedTitle, rawTitle, url].filter(Boolean).join('\n'),
+            matchText: [site.label, title, pageTitle, normalizedTitle, rawTitle, url].filter(Boolean).join('\n'),
           };
         }
       }
@@ -2289,6 +2331,25 @@ export default {
 
     toggleExpandApp(key: string) {
       this.$set(this.expandedApps, key, !this.expandedApps[key]);
+    },
+
+    toggleExpandContext(key: string) {
+      this.$set(this.expandedContexts, key, !this.expandedContexts[key]);
+    },
+
+    onContextRowClick(catKey: string, appName: string, t: any, evt: MouseEvent) {
+      if (this.isDraggingActivity) return;
+      if (t.events && t.events.length) {
+        if (evt.metaKey || evt.ctrlKey || evt.shiftKey) {
+          const key = this.titleRowKey(catKey, appName, t.title);
+          this.onActivityRowClick(key, { type: 'title', app: appName, title: t.title, rawTitle: t.rawTitle || t.title }, evt);
+        } else {
+          this.toggleExpandContext(catKey + '/' + appName + '/' + t.title);
+        }
+      } else {
+        const key = this.titleRowKey(catKey, appName, t.title);
+        this.onActivityRowClick(key, { type: 'title', app: appName, title: t.title, rawTitle: t.rawTitle || t.title }, evt);
+      }
     },
 
     toggleSidebarNode(key: string) {
@@ -2796,6 +2857,7 @@ export default {
 
       if (selected.expansion.type === 'cat') this.toggleExpandCat(selected.expansion.key);
       else if (selected.expansion.type === 'app') this.toggleExpandApp(selected.expansion.key);
+      else if (selected.expansion.type === 'ctx') this.toggleExpandContext(selected.expansion.key);
       else this.toggleChronoBlock(selected.expansion.key);
       return true;
     },
@@ -4340,6 +4402,32 @@ export default {
 .act-indent2 {
   width: 52px;
   flex-shrink: 0;
+}
+
+.act-indent3 {
+  width: 72px;
+  flex-shrink: 0;
+}
+
+.act-row--context-event {
+  cursor: default;
+  &:hover { background: rgba(255,255,255,0.02); }
+  .act-title {
+    flex: 1;
+    font-size: 11px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.8;
+  }
+  .act-time {
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+    opacity: 0.6;
+  }
 }
 
 .act-app-icon {
