@@ -24,7 +24,9 @@ class CapturedScreenshot:
 
 
 class MacOSScreenshotCapture:
-    def capture(self, output_path: Path) -> CapturedScreenshot:
+    def capture(
+        self, output_path: Path, jpeg_quality: int = JPEG_QUALITY
+    ) -> CapturedScreenshot:
         if platform.system() != "Darwin":
             raise RuntimeError("aw-watcher-screenshot capture is currently macOS-only")
 
@@ -45,7 +47,7 @@ class MacOSScreenshotCapture:
                     "jpeg",
                     "-s",
                     "formatOptions",
-                    str(JPEG_QUALITY),
+                    str(jpeg_quality),
                     str(temporary_path),
                     "--out",
                     str(output_path),

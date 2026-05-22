@@ -26,7 +26,8 @@ class FakeClient:
     def __init__(self, enabled=True, afk_events=None, screenshot_events=None):
         self.settings = {
             "chronioScreenshotsEnabled": enabled,
-            "chronioScreenshotIntervalSeconds": 60,
+            "chronioScreenshotIntervalSeconds": 300,
+            "chronioScreenshotQuality": 60,
             "chronioScreenshotRetentionDays": 30,
             "chronioScreenshotStorageLimitMb": 2048,
         }
@@ -72,9 +73,11 @@ class FakeClient:
 class FakeCapture:
     def __init__(self):
         self.paths = []
+        self.jpeg_qualities = []
 
-    def capture(self, output_path: Path) -> CapturedScreenshot:
+    def capture(self, output_path: Path, jpeg_quality: int) -> CapturedScreenshot:
         self.paths.append(output_path)
+        self.jpeg_qualities.append(jpeg_quality)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"jpeg")
         return CapturedScreenshot(
@@ -195,6 +198,7 @@ def test_capture_writes_relative_file_key_metadata(tmp_path):
     expected_key = "2026-05-22/2026-05-22T13-14-15.123Z.jpg"
     assert event is not None
     assert capture.paths == [tmp_path / expected_key]
+    assert capture.jpeg_qualities == [60]
     assert client.events == [("aw-watcher-screenshot_test-host", event)]
     assert event.data == {
         "file_key": expected_key,
@@ -229,6 +233,13 @@ def test_invalid_interval_falls_back_to_prd_default():
     client.settings["chronioScreenshotIntervalSeconds"] = 0
 
     assert load_settings(client).interval_seconds == DEFAULT_INTERVAL_SECONDS
+
+
+def test_quality_setting_is_clamped_to_jpeg_range():
+    client = FakeClient()
+    client.settings["chronioScreenshotQuality"] = 140
+
+    assert load_settings(client).jpeg_quality == 100
 
 
 def test_pause_state_is_persisted_as_activitywatch_setting():

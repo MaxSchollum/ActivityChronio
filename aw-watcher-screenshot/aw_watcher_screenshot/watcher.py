@@ -13,12 +13,14 @@ logger = logging.getLogger(__name__)
 
 BUCKET_TYPE = "screenshot"
 DEFAULT_INTERVAL_SECONDS = 5 * 60
+DEFAULT_JPEG_QUALITY = 60
 DEFAULT_RETENTION_DAYS = 30
 DEFAULT_STORAGE_LIMIT_MB = 2048
 AFK_LOOKBACK_SECONDS = 10 * 60
 SCREENSHOT_ENABLED_SETTING = "chronioScreenshotsEnabled"
 SCREENSHOT_INTERVAL_SETTING = "chronioScreenshotIntervalSeconds"
 SCREENSHOT_PAUSED_SETTING = "chronioScreenshotCapturePaused"
+SCREENSHOT_QUALITY_SETTING = "chronioScreenshotQuality"
 SCREENSHOT_RETENTION_SETTING = "chronioScreenshotRetentionDays"
 SCREENSHOT_STORAGE_LIMIT_SETTING = "chronioScreenshotStorageLimitMb"
 
@@ -28,6 +30,7 @@ class ScreenshotSettings:
     enabled: bool
     paused: bool = False
     interval_seconds: float = DEFAULT_INTERVAL_SECONDS
+    jpeg_quality: int = DEFAULT_JPEG_QUALITY
     retention_days: float = DEFAULT_RETENTION_DAYS
     storage_limit_bytes: int = DEFAULT_STORAGE_LIMIT_MB * 1024 * 1024
 
@@ -66,6 +69,7 @@ def load_settings(client: Any) -> ScreenshotSettings:
         enabled = _is_enabled_value(client.get_setting(SCREENSHOT_ENABLED_SETTING))
         paused = _is_enabled_value(client.get_setting(SCREENSHOT_PAUSED_SETTING))
         interval_value = client.get_setting(SCREENSHOT_INTERVAL_SETTING)
+        quality_value = client.get_setting(SCREENSHOT_QUALITY_SETTING)
         retention_value = client.get_setting(SCREENSHOT_RETENTION_SETTING)
         storage_limit_value = client.get_setting(SCREENSHOT_STORAGE_LIMIT_SETTING)
     except Exception:
@@ -78,6 +82,7 @@ def load_settings(client: Any) -> ScreenshotSettings:
         interval_seconds=_positive_number_or_default(
             interval_value, DEFAULT_INTERVAL_SECONDS
         ),
+        jpeg_quality=_jpeg_quality_or_default(quality_value),
         retention_days=_positive_number_or_default(
             retention_value, DEFAULT_RETENTION_DAYS
         ),
@@ -110,6 +115,11 @@ def _positive_number_or_default(value: Any, default: float) -> float:
 def _megabytes_to_bytes(value: Any) -> int:
     megabytes = _positive_number_or_default(value, DEFAULT_STORAGE_LIMIT_MB)
     return int(megabytes * 1024 * 1024)
+
+
+def _jpeg_quality_or_default(value: Any) -> int:
+    quality = _positive_number_or_default(value, DEFAULT_JPEG_QUALITY)
+    return min(100, max(1, int(quality)))
 
 
 class ScreenshotWatcher:
@@ -171,7 +181,9 @@ class ScreenshotWatcher:
         file_key = build_file_key(capture_timestamp)
         file_path = self.root / file_key
         try:
-            captured = self.capture_backend.capture(file_path)
+            captured = self.capture_backend.capture(
+                file_path, jpeg_quality=settings.jpeg_quality
+            )
         except Exception:
             self._unlink_orphaned_capture(file_path)
             raise

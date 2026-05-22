@@ -15,6 +15,12 @@
         v-if="timelineCanvas.nowPx !== null"
         :style="{top: timelineCanvas.nowPx + 'px'}"
       )
+      .tl-screenshot-marker(
+        v-for="marker in timelineCanvas.screenshotMarkers"
+        :key="marker.key"
+        :style="{top: marker.top + 'px'}"
+        :title="marker.label"
+      )
       .tl-block(
         v-for="block in timelineCanvas.blocks"
         :key="'b-' + block.label + block.range"
@@ -196,6 +202,20 @@ export default {
     top: -4px;
     width: 8px;
   }
+}
+
+.tl-screenshot-marker {
+  background: #f8fafc;
+  border: 1px solid #0f1117;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(248, 250, 252, 0.28);
+  height: 7px;
+  pointer-events: none;
+  position: absolute;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 7px;
+  z-index: 4;
 }
 
 .tl-block {

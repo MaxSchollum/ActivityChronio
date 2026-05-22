@@ -10,15 +10,18 @@ from aw_core.models import Event
 from aw_query.exceptions import QueryException
 from flask import (
     Blueprint,
+    abort,
     current_app,
     jsonify,
     make_response,
     request,
+    send_file,
 )
 from flask_restx import Api, Resource, fields
 
 from . import logger
 from .api import ServerAPI
+from .chronio_screenshots import screenshot_path
 from .exceptions import BadRequest, Unauthorized
 
 
@@ -267,6 +270,45 @@ class EventResource(Resource):
         )
         success = current_app.api.delete_event(bucket_id, event_id)
         return {"success": success}, 200
+
+
+def _screenshot_event_file(event_data):
+    data = event_data.get("data", {}) if event_data else {}
+    return screenshot_path(data.get("file_key", ""))
+
+
+@api.route("/0/chronio/screenshots/<string:bucket_id>/<int:event_id>/image")
+class ChronioScreenshotImageResource(Resource):
+    def get(self, bucket_id: str, event_id: int):
+        event_data = current_app.api.get_event(bucket_id, event_id)
+        path = _screenshot_event_file(event_data)
+        if not path or not path.is_file():
+            abort(404)
+
+        mimetype = event_data.get("data", {}).get("mime_type", "image/jpeg")
+        return send_file(path, mimetype=mimetype, conditional=True)
+
+
+@api.route("/0/chronio/screenshots/<string:bucket_id>")
+class ChronioScreenshotRangeResource(Resource):
+    @api.param("start", "Start date of screenshots to delete")
+    @api.param("end", "End date of screenshots to delete")
+    def delete(self, bucket_id: str):
+        args = request.args
+        if "start" not in args or "end" not in args:
+            raise BadRequest("MissingParameter", "Screenshot deletion needs start and end")
+
+        start = iso8601.parse_date(args["start"])
+        end = iso8601.parse_date(args["end"])
+        events = current_app.api.get_events(bucket_id, limit=-1, start=start, end=end)
+        deleted = 0
+        for event_data in events:
+            path = _screenshot_event_file(event_data)
+            if path and path.is_file():
+                path.unlink()
+            if current_app.api.delete_event(bucket_id, event_data["id"]):
+                deleted += 1
+        return {"deleted": deleted}, 200
 
 
 @api.route("/0/buckets/<string:bucket_id>/heartbeat")

@@ -32,6 +32,8 @@ The watcher reads the ActivityWatch settings written by Chronio:
 - `chronioScreenshotsEnabled` must be enabled before any capture.
 - `chronioScreenshotIntervalSeconds` controls the loop interval when set to a
   positive number. Otherwise the watcher falls back to five minutes.
+- `chronioScreenshotQuality` controls JPEG quality from 1 to 100. Otherwise
+  the watcher falls back to the PRD quality of 60.
 - `chronioScreenshotRetentionDays` removes screenshot files and events older
   than the configured age while the watcher is enabled.
 - `chronioScreenshotStorageLimitMb` removes the oldest remaining screenshot
@@ -49,10 +51,8 @@ poetry run aw-watcher-screenshot --pause
 poetry run aw-watcher-screenshot --resume
 ```
 
-Chronio does not yet store a screenshot quality setting, so this watcher uses
-the PRD capture defaults: JPEG quality 60 and a maximum width of 1280px.
-Viewer/API deletion and the macOS global hotkey that should call pause/resume
-remain outside this watcher package.
+The maximum capture width stays fixed at the PRD default of 1280px. The
+Chronio day-view shortcut and the watcher CLI both use the pause setting.
 
 ## Run
 
