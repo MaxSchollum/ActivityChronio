@@ -1,0 +1,55 @@
+aw-watcher-screenshot
+=====================
+
+Captures local Chronio screenshots on macOS while ActivityWatch confirms the
+user is not AFK.
+
+The watcher stores JPEG files below:
+
+`~/Library/Application Support/ActivityChronio/screenshots/YYYY-MM-DD/`
+
+It creates the ActivityWatch bucket
+`aw-watcher-screenshot_{hostname}` with bucket type `screenshot`. Screenshot
+events use zero duration and store a controlled file reference in metadata:
+
+```json
+{
+  "file_key": "YYYY-MM-DD/YYYY-MM-DDTHH-MM-SS.mmmZ.jpg",
+  "mime_type": "image/jpeg",
+  "width": 1280,
+  "height": 720,
+  "byte_size": 153600
+}
+```
+
+`file_key` is always relative to the screenshot root. Absolute screenshot
+paths are not written to ActivityWatch event data.
+
+## Settings
+
+The watcher reads the ActivityWatch settings written by Chronio:
+
+- `chronioScreenshotsEnabled` must be enabled before any capture.
+- `chronioScreenshotIntervalSeconds` controls the loop interval when set to a
+  positive number. Otherwise the watcher falls back to five minutes.
+
+Every capture also requires an `aw-watcher-afk_{hostname}` event covering the
+capture timestamp with `data.status == "not-afk"`. Missing, stale, AFK, or
+unreadable AFK state skips capture.
+
+The current Chronio settings also store screenshot storage limit and retention
+values. Retention and viewer/API deletion are deliberately not implemented in
+this producer-only slice. Chronio does not yet store a screenshot quality
+setting or capture pause state, so this watcher uses the PRD capture defaults:
+JPEG quality 60 and a maximum width of 1280px.
+
+## Run
+
+From this directory:
+
+```sh
+poetry install
+poetry run aw-watcher-screenshot
+```
+
+The default backend shells out to macOS `screencapture` and `sips`.
