@@ -1,5 +1,6 @@
 import {
   buildChronioExportRows,
+  chronioEventsByDate,
   chronioProductivityPercent,
   chronioEventsForDate,
   chronioPeriodStart,
@@ -23,6 +24,10 @@ describe('Chronio multi-day summaries', () => {
     ];
 
     expect(chronioEventsForDate(events, '2026-05-19')).toEqual([events[1], events[2]]);
+    expect(chronioEventsByDate(events)).toEqual({
+      '2026-05-18': [events[0]],
+      '2026-05-19': [events[1], events[2]],
+    });
     expect(
       summarizeChronioDates(events, (trackedEvent: IEvent) =>
         trackedEvent.data.app === 'Code' ? ['Work', 'Code'] : ['Comms', 'Email']
