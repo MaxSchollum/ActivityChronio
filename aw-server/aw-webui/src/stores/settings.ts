@@ -42,7 +42,9 @@ interface State {
   chronioExcludedApps: string[];
   chronioExcludedTitlePatterns: string[];
   chronioScreenshotsEnabled: boolean;
+  chronioScreenshotCapturePaused: boolean;
   chronioScreenshotIntervalSeconds: number;
+  chronioScreenshotQuality: number;
   chronioScreenshotStorageLimitMb: number;
   chronioScreenshotRetentionDays: number;
   chronioCategorySparklinesVisible: boolean;
@@ -90,7 +92,9 @@ export const useSettingsStore = defineStore('settings', {
     chronioExcludedApps: [],
     chronioExcludedTitlePatterns: [],
     chronioScreenshotsEnabled: false,
-    chronioScreenshotIntervalSeconds: 60,
+    chronioScreenshotCapturePaused: false,
+    chronioScreenshotIntervalSeconds: 300,
+    chronioScreenshotQuality: 60,
     chronioScreenshotStorageLimitMb: 2048,
     chronioScreenshotRetentionDays: 30,
     chronioCategorySparklinesVisible: true,

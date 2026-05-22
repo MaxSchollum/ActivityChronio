@@ -130,6 +130,17 @@ div.chronio-settings-view
               )
               em sec
           label.settings-field
+            span JPEG quality
+            .number-field
+              input(
+                type="number"
+                min="1"
+                max="100"
+                :value="settingsStore.chronioScreenshotQuality"
+                @change="updateNumber('chronioScreenshotQuality', $event)"
+              )
+              em %
+          label.settings-field
             span Storage limit
             .number-field
               input(

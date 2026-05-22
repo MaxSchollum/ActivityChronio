@@ -69,7 +69,7 @@ div.chronio-view
     .chronio-sidebar
       nav.sidebar-nav
         .sidebar-nav-item(:class="{ active: !showWeeklyReport }" @click="closeReport") Activities
-        .sidebar-nav-item(title="Coming in V2" @click="$router.push('/chronio/stats')") Stats
+        .sidebar-nav-item(@click="$router.push('/chronio/stats')") Stats
         .sidebar-nav-item(:class="{ active: showWeeklyReport }" @click="openWeeklyReport") Reports
         .sidebar-nav-item(@click="$router.push('/chronio/settings')") Settings
 
@@ -477,14 +477,19 @@ div.chronio-view
         button.chronio-shortcuts-hint(type="button" title="Show keyboard shortcuts (?)" @click="openShortcutReference") ⌨ Shortcuts
 
     //- ─── RIGHT: TIMELINE ────────────────────────────────────────────
-    ChronioDay(
-      v-if="selectedPeriod === 'day'"
-      ref="timeline"
-      :timeline="timeline"
-      :timeline-canvas="timelineCanvas"
-      :active-event-count="activeWindowEvents.length"
-      @block-click="onTimelineBlockClick"
-    )
+    .chronio-day-rail(v-if="selectedPeriod === 'day'")
+      ChronioDay(
+        ref="timeline"
+        :timeline="timeline"
+        :timeline-canvas="timelineCanvas"
+        :active-event-count="activeWindowEvents.length"
+        @block-click="onTimelineBlockClick"
+      )
+      ChronioScreenshots(
+        :screenshots="screenshotFrames"
+        :loading="screenshotLoading"
+        @delete-hour="deleteScreenshotHour"
+      )
 
   //- ── TOAST NOTIFICATIONS (#78) ───────────────────────────────────────
   .chronio-toasts
@@ -556,6 +561,7 @@ import {
 import ChronioDay from './ChronioDay.vue';
 import ChronioMonth from './ChronioMonth.vue';
 import ChronioReport from './ChronioReport.vue';
+import ChronioScreenshots from './ChronioScreenshots.vue';
 import ChronioWeek from './ChronioWeek.vue';
 
 // System processes that are never real user activity
@@ -626,6 +632,7 @@ const SHORTCUT_REFERENCE_ROWS = [
   { keys: 'Space', action: 'Expand or collapse selected row' },
   { keys: '1–9', action: 'Assign selection to sidebar category' },
   { keys: '/ / ⌘F', action: 'Focus search' },
+  { keys: 'Shift+P', action: 'Pause / resume screenshots' },
   { keys: 'Escape', action: 'Clear filters and selection' },
   { keys: '?', action: 'Show this reference' },
 ];
@@ -661,6 +668,7 @@ export default {
     ChronioDay,
     ChronioMonth,
     ChronioReport,
+    ChronioScreenshots,
     ChronioWeek,
   },
 
@@ -689,6 +697,8 @@ export default {
       selectedEvent: null as any,
       windowEvents: [] as any[],
       afkEvents: [] as any[],
+      screenshotEvents: [] as any[],
+      screenshotLoading: false as boolean,
       // expand/filter state
       expandedCats: {} as Record<string, boolean>,
       expandedApps: {} as Record<string, boolean>,
@@ -859,6 +869,25 @@ export default {
         (sum: number, e: any) => sum + (e.duration || 0), 0
       );
       return formatDuration(total);
+    },
+
+    screenshotFrames(): any[] {
+      return [...(this.screenshotEvents as any[])]
+        .filter((event: any) => event.id !== undefined && event.data?.file_key)
+        .sort((a: any, b: any) => moment(a.timestamp).valueOf() - moment(b.timestamp).valueOf())
+        .map((event: any) => {
+          const ts = moment(event.timestamp);
+          const bucketId = event.bucketId;
+          return {
+            bucketId,
+            eventId: event.id,
+            imageUrl: this.screenshotImageUrl(bucketId, event.id),
+            key: bucketId + '/' + event.id,
+            label: ts.format('MMM D, YYYY HH:mm'),
+            startMs: ts.valueOf(),
+            time: ts.format('HH:mm'),
+          };
+        });
     },
 
     scopedActiveWindowEvents(): any[] {
@@ -1557,7 +1586,7 @@ export default {
       return blocks;
     },
 
-    timelineCanvas(): { blocks: any[]; hours: any[]; nowPx: number | null; totalHeight: number; canvasStartMs: number } {
+    timelineCanvas(): { blocks: any[]; hours: any[]; screenshotMarkers: any[]; nowPx: number | null; totalHeight: number; canvasStartMs: number } {
       const dayStart = moment(this.selectedDate).startOf('day').valueOf();
       const SCALE = HOUR_PX / 3600000; // px per millisecond
       const blocks_raw = [
@@ -1597,6 +1626,13 @@ export default {
         const heightPx = Math.max(4, (item.endMs - item.startMs) * SCALE);
         return { ...item, top: topPx, heightPx, opacity: this.blockOpacity(item) };
       });
+      const screenshotMarkers = (this.screenshotFrames as any[])
+        .filter((frame: any) => frame.startMs >= canvasStartMs && frame.startMs <= canvasEndMs)
+        .map((frame: any) => ({
+          key: frame.key,
+          label: frame.label,
+          top: (frame.startMs - canvasStartMs) * SCALE,
+        }));
 
       // Current time red line (today only, if within visible range)
       let nowPx: number | null = null;
@@ -1607,7 +1643,14 @@ export default {
         }
       }
 
-      return { blocks, hours, nowPx, totalHeight: (endHour - startHour) * HOUR_PX, canvasStartMs };
+      return {
+        blocks,
+        hours,
+        screenshotMarkers,
+        nowPx,
+        totalHeight: (endHour - startHour) * HOUR_PX,
+        canvasStartMs,
+      };
     },
 
     // Chronological view: timeline blocks as top-level rows, individual events nested inside
@@ -2906,6 +2949,7 @@ export default {
       else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); this.setViewMode('apps'); }
       else if (e.key === 'c' || e.key === 'C') { e.preventDefault(); this.setViewMode('chrono'); }
       else if (e.key === '/') { e.preventDefault(); this.focusSearch(); }
+      else if (e.shiftKey && e.key.toLowerCase() === 'p') { e.preventDefault(); this.toggleScreenshotCapture(); }
       else if (e.key === '?') { e.preventDefault(); this.openShortcutReference(); }
       else if (e.key === 'Escape') { e.preventDefault(); this.clearShortcutFiltersAndSelection(); }
       else if ((e.key === ' ' || e.key === 'Spacebar') && this.toggleSelectedActivityExpansion()) {
@@ -3075,6 +3119,45 @@ export default {
       URL.revokeObjectURL(url);
     },
 
+    screenshotImageUrl(bucketId: string, eventId: number): string {
+      return (
+        (getClient() as any).baseURL +
+        '/api/0/chronio/screenshots/' +
+        encodeURIComponent(bucketId) +
+        '/' +
+        eventId +
+        '/image'
+      );
+    },
+
+    async deleteScreenshotHour(frame: any) {
+      const start = moment(frame.startMs).startOf('hour');
+      const end = start.clone().add(1, 'hour');
+      const bucketIds = Array.from(new Set(
+        (this.screenshotEvents as any[]).map((event: any) => event.bucketId)
+      ));
+      await Promise.all(bucketIds.map((bucketId: string) =>
+        (getClient() as any).req.delete(
+          '/0/chronio/screenshots/' + encodeURIComponent(bucketId),
+          { params: { start: start.toISOString(), end: end.toISOString() } }
+        )
+      ));
+      this.screenshotEvents = (this.screenshotEvents as any[]).filter((event: any) => {
+        const ts = moment(event.timestamp);
+        return ts.isBefore(start) || !ts.isBefore(end);
+      });
+    },
+
+    async toggleScreenshotCapture() {
+      const paused = !this.settingsStore.chronioScreenshotCapturePaused;
+      try {
+        await this.settingsStore.update({ chronioScreenshotCapturePaused: paused });
+        this.showToast('Screenshot capture ' + (paused ? 'paused' : 'resumed'));
+      } catch (error) {
+        this.showToast('Screenshot capture setting could not be saved');
+      }
+    },
+
     routePath(): string {
       return '/chronio/' + this.selectedPeriod + '/' + this.selectedDate;
     },
@@ -3099,6 +3182,9 @@ export default {
 
         const allWindowBuckets: string[] = allHosts.flatMap((h: string) => this.bucketsStore.bucketsWindow(h));
         const allAfkBuckets: string[] = allHosts.flatMap((h: string) => this.bucketsStore.bucketsAFK(h));
+        const allScreenshotBuckets: string[] = allHosts.flatMap((h: string) =>
+          this.bucketsStore.bucketsScreenshots(h)
+        );
 
         const start = this.periodStartFor(moment(this.selectedDate), this.selectedPeriod);
         const end = start.clone().add(1, this.selectedPeriod);
@@ -3113,6 +3199,13 @@ export default {
         const afkEvtArrays = await Promise.all(
           allAfkBuckets.map((b: string) => getClient().getEvents(b, params).catch(() => []))
         );
+        this.screenshotLoading = this.selectedPeriod === 'day' && allScreenshotBuckets.length > 0;
+        const screenshotEvtArrays = this.selectedPeriod === 'day'
+          ? await Promise.all(allScreenshotBuckets.map(async (bucketId: string) => {
+              const events = await getClient().getEvents(bucketId, params).catch(() => []);
+              return events.map((event: any) => ({ ...event, bucketId }));
+            }))
+          : [];
 
         // Merge and sort by timestamp descending
         const mergeEvents = (arrays: any[][]) =>
@@ -3121,6 +3214,8 @@ export default {
         this.windowEvents = mergeEvents(windowEvtArrays);
         this.afkEvents = mergeEvents(afkEvtArrays);
         this.loadCategorySparklines();
+        this.screenshotEvents = mergeEvents(screenshotEvtArrays);
+        this.screenshotLoading = false;
         if (!silent) {
           this.loading = false;
           this.$nextTick(() => this.scrollTimeline());
@@ -3459,6 +3554,16 @@ export default {
 .chronio-body.period-week,
 .chronio-body.period-month {
   grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.chronio-day-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+
+  > .chronio-timeline-panel {
+    flex: 1;
+  }
 }
 
 @media print {
