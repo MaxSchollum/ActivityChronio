@@ -32,16 +32,27 @@ The watcher reads the ActivityWatch settings written by Chronio:
 - `chronioScreenshotsEnabled` must be enabled before any capture.
 - `chronioScreenshotIntervalSeconds` controls the loop interval when set to a
   positive number. Otherwise the watcher falls back to five minutes.
+- `chronioScreenshotRetentionDays` removes screenshot files and events older
+  than the configured age while the watcher is enabled.
+- `chronioScreenshotStorageLimitMb` removes the oldest remaining screenshot
+  files and events while their disk usage exceeds the configured limit.
 
 Every capture also requires an `aw-watcher-afk_{hostname}` event covering the
 capture timestamp with `data.status == "not-afk"`. Missing, stale, AFK, or
 unreadable AFK state skips capture.
 
-The current Chronio settings also store screenshot storage limit and retention
-values. Retention and viewer/API deletion are deliberately not implemented in
-this producer-only slice. Chronio does not yet store a screenshot quality
-setting or capture pause state, so this watcher uses the PRD capture defaults:
-JPEG quality 60 and a maximum width of 1280px.
+The watcher-local pause state is stored as the ActivityWatch setting
+`chronioScreenshotCapturePaused`. Use the watcher CLI to persist it:
+
+```sh
+poetry run aw-watcher-screenshot --pause
+poetry run aw-watcher-screenshot --resume
+```
+
+Chronio does not yet store a screenshot quality setting, so this watcher uses
+the PRD capture defaults: JPEG quality 60 and a maximum width of 1280px.
+Viewer/API deletion and the macOS global hotkey that should call pause/resume
+remain outside this watcher package.
 
 ## Run
 

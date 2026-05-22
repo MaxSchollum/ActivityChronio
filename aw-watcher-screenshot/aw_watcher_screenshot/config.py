@@ -16,4 +16,17 @@ def parse_args():
         action="store_true",
         help="run with verbose logging",
     )
+    pause_group = parser.add_mutually_exclusive_group()
+    pause_group.add_argument(
+        "--pause",
+        dest="pause",
+        action="store_true",
+        help="persist pause state and exit",
+    )
+    pause_group.add_argument(
+        "--resume",
+        dest="resume",
+        action="store_true",
+        help="clear persisted pause state and exit",
+    )
     return parser.parse_args()
