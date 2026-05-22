@@ -33,16 +33,16 @@ div.chronio-view
       .chronio-metric.goal-metric(v-if="goalSummary.total > 0")
         span.label Goals:
         span.value {{ goalSummary.hit }}/{{ goalSummary.total }}
-      .chronio-afk-badge(:class="afkStatus" :title="afkStatus === 'active' ? 'AFK idle detection active' : 'No AFK data — idle time not filtered'")
-        | {{ afkStatus === 'active' ? 'AFK ✓' : 'AFK ⚠' }}
+      .chronio-afk-badge(:class="afkStatus" :title="afkStatusTitle")
+        | {{ afkStatusLabel }}
       button.chronio-nav-btn.chronio-away-toggle(
         v-if="selectedPeriod === 'day'"
         :class="{active: showAwayBlocks}"
         :disabled="afkStatus !== 'active'"
         :aria-pressed="showAwayBlocks ? 'true' : 'false'"
-        :title="afkStatus === 'active' ? (showAwayBlocks ? 'Hide away time' : 'Show away time') : 'Away time needs AFK data'"
+        :title="awayToggleTitle"
         @click="showAwayBlocks = !showAwayBlocks"
-      ) Away
+      ) {{ awayToggleLabel }}
       .chronio-search(:class="{active: isSearchActive}")
         input(
           ref="searchInput"
@@ -833,6 +833,28 @@ export default {
     afkStatus(): 'active' | 'no-data' {
       if (this.loading) return 'no-data';
       return this.notAfkIntervals.length > 0 ? 'active' : 'no-data';
+    },
+
+    afkStatusLabel(): string {
+      return this.afkStatus === 'active' ? 'AFK filter on' : 'AFK no data';
+    },
+
+    afkStatusTitle(): string {
+      return this.afkStatus === 'active'
+        ? 'AFK filtering is active. Idle time is excluded from tracked activity.'
+        : 'No AFK data. Idle time cannot be filtered from tracked activity.';
+    },
+
+    awayToggleLabel(): string {
+      if (this.afkStatus !== 'active') return 'Away unavailable';
+      return this.showAwayBlocks ? 'Away shown' : 'Away hidden';
+    },
+
+    awayToggleTitle(): string {
+      if (this.afkStatus !== 'active') return 'Away blocks need AFK data.';
+      return this.showAwayBlocks
+        ? 'Away blocks are shown on the daily timeline. Click to hide them.'
+        : 'Away blocks are hidden on the daily timeline. Click to show them.';
     },
 
     calendarMonthLabel(): string {
