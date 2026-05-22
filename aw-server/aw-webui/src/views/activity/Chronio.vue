@@ -58,6 +58,18 @@ div.chronio-view
           aria-label="Clear search"
           @click="clearAdvancedSearch"
         ) ×
+      .chronio-export
+        button.chronio-nav-btn(
+          :class="{active: showExportMenu}"
+          :disabled="!exportRows.length"
+          :aria-expanded="showExportMenu ? 'true' : 'false'"
+          aria-haspopup="menu"
+          title="Export current review period"
+          @click="showExportMenu = !showExportMenu"
+        ) Export
+        .chronio-export-menu(v-if="showExportMenu")
+          button(type="button" @click="exportPeriod('csv')") Export CSV
+          button(type="button" @click="exportPeriod('json')") Export JSON
       button.chronio-nav-btn(@click="$router.push('/chronio/settings')" title="Settings") Settings
 
   div.chronio-loading(v-if="loading")
@@ -71,17 +83,6 @@ div.chronio-view
         .sidebar-nav-item(:class="{ active: !showWeeklyReport }" @click="closeReport") Activities
         .sidebar-nav-item(@click="$router.push('/chronio/stats')") Stats
         .sidebar-nav-item(:class="{ active: showWeeklyReport }" @click="openWeeklyReport") Reports
-        .sidebar-nav-item(@click="$router.push('/chronio/settings')") Settings
-
-      .sidebar-export-actions
-        button.sidebar-export-btn(
-          :disabled="!exportRows.length"
-          @click="exportPeriod('csv')"
-        ) Export CSV
-        button.sidebar-export-btn(
-          :disabled="!exportRows.length"
-          @click="exportPeriod('json')"
-        ) Export JSON
 
       .sidebar-tree
         .sidebar-summary-row(
@@ -692,6 +693,7 @@ export default {
       sparklineRequestId: 0 as number,
       showWeeklyReport: false as boolean,
       showDatePicker: false as boolean,
+      showExportMenu: false as boolean,
       showAwayBlocks: true as boolean,
       loading: true as boolean,
       selectedEvent: null as any,
@@ -3102,6 +3104,7 @@ export default {
 
     exportPeriod(format: 'csv' | 'json') {
       if (!(this.exportRows as any[]).length) return;
+      this.showExportMenu = false;
       const filename =
         'chronio-' + this.periodStart + '-to-' + this.periodEndDate + '.' + format;
       const content =
@@ -3532,6 +3535,42 @@ export default {
   &:hover { color: var(--text); }
 }
 
+.chronio-export {
+  position: relative;
+}
+
+.chronio-export-menu {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+  display: grid;
+  gap: 2px;
+  min-width: 118px;
+  padding: 4px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+}
+
+.chronio-export-menu button {
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  min-height: 28px;
+  padding: 0 8px;
+  text-align: left;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text);
+  }
+}
+
 /* ── LOADING ─────────────────────────────────────────────────────── */
 .chronio-loading {
   display: flex;
@@ -3608,36 +3647,6 @@ export default {
   border-radius: 0;
   &:hover { color: var(--text); background: rgba(255,255,255,0.04); }
   &.active { color: #4b8bff; background: rgba(75,139,255,0.08); font-weight: 500; }
-}
-
-.sidebar-export-actions {
-  border-bottom: 1px solid var(--border);
-  display: grid;
-  gap: 6px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: 10px 12px;
-}
-
-.sidebar-export-btn {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 12px;
-  min-height: 30px;
-  padding: 0 7px;
-  white-space: nowrap;
-
-  &:hover:not(:disabled) {
-    border-color: var(--border-hover);
-    color: var(--text);
-  }
-
-  &:disabled {
-    cursor: not-allowed;
-    opacity: 0.35;
-  }
 }
 
 .sidebar-tree {
