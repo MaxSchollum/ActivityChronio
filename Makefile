@@ -53,6 +53,7 @@ build-webui:
 # immediately serves the new bundle without requiring a server restart.
 # Use this during active development instead of build-webui.
 deploy-webui: build-webui
+	rm -rf aw-server/aw_server/static/*
 	cp -r aw-server/aw-webui/dist/. aw-server/aw_server/static/
 	@echo "✓ New bundle deployed to aw_server/static/ — hard-refresh browser (Cmd+Shift+R)"
 

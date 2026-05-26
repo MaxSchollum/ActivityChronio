@@ -24,26 +24,6 @@ div.chronio-settings-view
           h1 Settings
           p Tracking behavior and Chronio-specific review controls.
         .settings-grid
-          label.settings-field
-            span AFK timeout
-            .number-field
-              input(
-                type="number"
-                min="1"
-                :value="settingsStore.chronioAfkTimeoutMinutes"
-                @change="updateNumber('chronioAfkTimeoutMinutes', $event)"
-              )
-              em min
-          label.settings-field
-            span Away block threshold
-            .number-field
-              input(
-                type="number"
-                min="1"
-                :value="settingsStore.chronioAwayThresholdMinutes"
-                @change="updateNumber('chronioAwayThresholdMinutes', $event)"
-              )
-              em min
           label.settings-field.settings-field-wide
             span Always-active pattern
             input(
@@ -99,13 +79,6 @@ div.chronio-settings-view
               option(value="auto") Auto
               option(value="light") Light
               option(value="dark") Dark
-          label.settings-toggle
-            input(
-              type="checkbox"
-              :checked="settingsStore.chronioCategorySparklinesVisible"
-              @change="updateBoolean('chronioCategorySparklinesVisible', $event)"
-            )
-            span Show category sparklines
 
       section.settings-section(ref="screenshots" id="screenshots")
         .section-heading

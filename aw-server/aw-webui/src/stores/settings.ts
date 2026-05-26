@@ -36,8 +36,6 @@ interface State {
     timesPollIsShown: number;
   };
   always_active_pattern: string;
-  chronioAfkTimeoutMinutes: number;
-  chronioAwayThresholdMinutes: number;
   chronioIgnoredApps: string[];
   chronioExcludedApps: string[];
   chronioExcludedTitlePatterns: string[];
@@ -47,7 +45,6 @@ interface State {
   chronioScreenshotQuality: number;
   chronioScreenshotStorageLimitMb: number;
   chronioScreenshotRetentionDays: number;
-  chronioCategorySparklinesVisible: boolean;
   classes: Category[];
   views: View[];
 
@@ -86,8 +83,6 @@ export const useSettingsStore = defineStore('settings', {
     },
 
     always_active_pattern: '',
-    chronioAfkTimeoutMinutes: 5,
-    chronioAwayThresholdMinutes: 5,
     chronioIgnoredApps: [],
     chronioExcludedApps: [],
     chronioExcludedTitlePatterns: [],
@@ -97,7 +92,6 @@ export const useSettingsStore = defineStore('settings', {
     chronioScreenshotQuality: 60,
     chronioScreenshotStorageLimitMb: 2048,
     chronioScreenshotRetentionDays: 30,
-    chronioCategorySparklinesVisible: true,
     classes: defaultCategories,
     views: defaultViews,
 
