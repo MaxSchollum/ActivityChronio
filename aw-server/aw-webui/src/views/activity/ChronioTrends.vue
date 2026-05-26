@@ -12,7 +12,7 @@ div.trends-view
         v-for="range in ranges"
         :key="range"
         :class="{ active: rangeDays === range }"
-        :disabled="loading || heatmapLoading"
+        :disabled="loading"
         @click="setRange(range)"
       ) {{ range }} days
 
@@ -36,7 +36,7 @@ div.trends-view
         strong Trend data could not be loaded
         span {{ error }}
         button(@click="loadTrends") Retry
-      .trends-message(v-else-if="!host")
+      .trends-message(v-else-if="!statsAvailable")
         strong No activity buckets found
         span Chronio needs window and AFK activity before it can calculate trends.
       template(v-else)
@@ -101,7 +101,6 @@ import moment from 'moment';
 import 'chart.js/auto';
 import { Line } from 'vue-chartjs/legacy';
 import queries from '~/queries';
-import { useActivityStore } from '~/stores/activity';
 import { useBucketsStore } from '~/stores/buckets';
 import { useCategoryStore } from '~/stores/categories';
 import { useSettingsStore } from '~/stores/settings';
@@ -193,7 +192,6 @@ export default {
 
   data() {
     return {
-      activityStore: useActivityStore(),
       bucketsStore: useBucketsStore(),
       categoryStore: useCategoryStore(),
       settingsStore: useSettingsStore(),
@@ -223,6 +221,32 @@ export default {
         }
       }
       return '';
+    },
+
+    statsBuckets(): {
+      afk: string[];
+      android: string[];
+      browser: string[];
+      stopwatch: string[];
+      window: string[];
+    } {
+      if (!this.host) {
+        return { afk: [], android: [], browser: [], stopwatch: [], window: [] };
+      }
+      return {
+        afk: this.bucketsStore.bucketsAFK(this.host),
+        android: this.bucketsStore.bucketsAndroid(this.host),
+        browser: this.bucketsStore.bucketsBrowser(this.host),
+        stopwatch: this.bucketsStore.bucketsStopwatch(this.host),
+        window: this.bucketsStore.bucketsWindow(this.host),
+      };
+    },
+
+    statsAvailable(): boolean {
+      return (
+        this.statsBuckets.android.length > 0 ||
+        (this.statsBuckets.afk.length > 0 && this.statsBuckets.window.length > 0)
+      );
     },
 
     rangeTimeperiod(): TimePeriod {
@@ -513,7 +537,7 @@ export default {
 
   methods: {
     setRange(range: number) {
-      if (range === this.rangeDays || this.loading || this.heatmapLoading) return;
+      if (range === this.rangeDays || this.loading) return;
       this.rangeDays = range;
       this.loadTrends();
     },
@@ -534,24 +558,10 @@ export default {
       this.hourlyPoints = [];
 
       try {
-        if (!this.host) return;
-
-        const queryOptions = {
-          host: this.host,
-          timeperiod: this.rangeTimeperiod,
-          filter_afk: true,
-          include_audible: false,
-          filter_categories: undefined,
-          always_active_pattern: this.settingsStore.always_active_pattern,
-          dontQueryInactive: false,
-        };
-
-        await this.activityStore.get_buckets(queryOptions);
-        this.activityStore.set_available();
-        if (!this.activityStore.category.available) return;
+        if (!this.statsAvailable) return;
 
         const started = Date.now();
-        this.dailyPoints = await this.loadDailySummaries(queryOptions.timeperiod, sequence);
+        this.dailyPoints = await this.loadDailySummaries(this.rangeTimeperiod, sequence);
         if (sequence !== this.loadSequence) return;
         this.loading = false;
         this.dailyProgress = '';
@@ -560,7 +570,7 @@ export default {
             `${Date.now() - started}ms for ${this.rangeDays} days`
         );
         if (this.hasDailyData) {
-          await this.loadHourlyHeatmap(queryOptions.timeperiod, sequence);
+          await this.loadHourlyHeatmap(this.rangeTimeperiod, sequence);
         }
       } catch (err) {
         if (sequence === this.loadSequence) {
@@ -585,9 +595,9 @@ export default {
     statsCachePrefix(): string {
       return [
         this.host,
-        (this.activityStore.buckets.window || []).join(','),
-        (this.activityStore.buckets.afk || []).join(','),
-        (this.activityStore.buckets.browser || []).join(','),
+        (this.statsBuckets.window || []).join(','),
+        (this.statsBuckets.afk || []).join(','),
+        (this.statsBuckets.browser || []).join(','),
         this.settingsStore.always_active_pattern || '',
         JSON.stringify(this.categoryStore.classes_for_query),
       ].join('|');
@@ -709,23 +719,23 @@ export default {
 
     categoryQuery() {
       const shared = {
-        bid_browsers: this.activityStore.buckets.browser,
+        bid_browsers: this.statsBuckets.browser,
         bid_stopwatch: undefined,
         categories: this.categoryStore.classes_for_query,
         filter_categories: undefined,
       };
 
-      if (this.activityStore.buckets.android[0]) {
+      if (this.statsBuckets.android[0]) {
         return queries.categoryQuery({
           ...shared,
-          bid_android: this.activityStore.buckets.android[0],
+          bid_android: this.statsBuckets.android[0],
         });
       }
 
       return queries.categoryQuery({
         ...shared,
-        bid_afk: this.activityStore.buckets.afk[0],
-        bid_window: this.activityStore.buckets.window[0],
+        bid_afk: this.statsBuckets.afk[0],
+        bid_window: this.statsBuckets.window[0],
         filter_afk: true,
         always_active_pattern: this.settingsStore.always_active_pattern,
       });
