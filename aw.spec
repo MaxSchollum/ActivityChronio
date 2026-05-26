@@ -3,6 +3,7 @@
 
 import os
 import platform
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -63,13 +64,28 @@ def build_collect(analysis, name, console=True):
     )
 
 
-# Get the current release version
-current_release = subprocess.run(
-    shlex.split("git describe --tags --abbrev=0"),
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    encoding="utf8",
-).stdout.strip()
+def detect_bundle_version():
+    result = subprocess.run(
+        shlex.split("git describe --tags --abbrev=0"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf8",
+    )
+    if result.returncode == 0:
+        tag_version = result.stdout.strip().lstrip("v")
+        if tag_version:
+            return tag_version
+
+    pyproject = Path("pyproject.toml")
+    if pyproject.exists():
+        match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.MULTILINE)
+        if match:
+            return match.group(1).lstrip("v")
+
+    return "0.0.0"
+
+
+current_release = detect_bundle_version()
 print("bundling chronio version " + current_release)
 
 # Get entitlements and codesign identity
