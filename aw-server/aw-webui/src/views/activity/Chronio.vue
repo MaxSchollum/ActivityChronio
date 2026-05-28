@@ -134,6 +134,7 @@ div.chronio-view
             :style="{paddingLeft: (row.depth * 14 + 10) + 'px'}"
           )
             span.sr-expand-spacer
+            .sr-dot(:style="{background: '#4b8bff'}")
             input.sr-rename-input(
               ref="inlineCreateInput"
               :value="inlineCreateValue"
@@ -163,6 +164,10 @@ div.chronio-view
             .sr-main
               span.sr-expand-btn(v-if="row.hasChildren" @click.stop="toggleSidebarExpand(row)") {{ sidebarExpanded[row.key] ? '▾' : '▸' }}
               span.sr-expand-spacer(v-else)
+              .sr-dot(
+                :style="{background: row.color}"
+                @click.stop="openColorPicker(row, $event)"
+              )
               input.sr-rename-input(
                 v-if="renamingKey === row.key"
                 ref="renameInput"
@@ -3755,6 +3760,16 @@ export default {
 .sr-expand-spacer {
   width: 14px;
   flex-shrink: 0;
+}
+
+.sr-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: transform 0.15s;
+  &:hover { transform: scale(1.4); }
 }
 
 .sr-rename-input {
