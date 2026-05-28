@@ -7,7 +7,7 @@
 #
 # We recommend creating and activating a Python virtualenv before building.
 # Instructions on how to do this can be found in the guide linked above.
-.PHONY: build build-webui deploy-webui install test clean clean_all
+.PHONY: build build-webui deploy-webui install test clean clean_all verify-macos-package
 
 SHELL := /usr/bin/env bash
 
@@ -190,6 +190,9 @@ dist/Chronio.dmg: dist/Chronio.app
 
 dist/notarize:
 	./scripts/notarize.sh
+
+verify-macos-package:
+	./scripts/package/verify_macos_package.sh
 
 package:
 	rm -rf dist

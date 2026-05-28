@@ -88,11 +88,21 @@ def detect_bundle_version():
 current_release = detect_bundle_version()
 print("bundling chronio version " + current_release)
 
-# Get entitlements and codesign identity
+# Get entitlements and codesign identity. Release builds must set
+# CHRONIO_CODESIGN_IDENTITY to a Developer ID Application identity; local QA
+# builds may omit it and will be ad-hoc signed by PyInstaller.
 entitlements_file = Path(".") / "scripts" / "package" / "entitlements.plist"
-codesign_identity = os.environ.get("APPLE_PERSONALID", "").strip()
+codesign_identity = (
+    os.environ.get("CHRONIO_CODESIGN_IDENTITY")
+    or os.environ.get("APPLE_PERSONALID")
+    or ""
+).strip()
 if not codesign_identity:
-    print("Environment variable APPLE_PERSONALID not set. Releases won't be signed.")
+    if os.environ.get("CHRONIO_REQUIRE_DEVELOPER_ID") == "1":
+        raise SystemExit(
+            "CHRONIO_REQUIRE_DEVELOPER_ID=1 requires CHRONIO_CODESIGN_IDENTITY"
+        )
+    print("No Chronio codesign identity set. Local builds will not be release-signed.")
 
 aw_core_path = Path(os.path.dirname(aw_core.__file__))
 restx_path = Path(os.path.dirname(flask_restx.__file__))
