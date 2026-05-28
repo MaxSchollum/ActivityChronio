@@ -24,7 +24,6 @@
       .tl-block(
         v-for="block in timelineCanvas.blocks"
         :key="'b-' + block.label + block.range"
-        :class="{'tl-block--away': block.isAway}"
         :style="{background: block.color, top: block.top + 'px', height: block.heightPx + 'px', opacity: block.opacity}"
         :title="blockTooltip(block)"
         @click="onBlockClick(block)"
@@ -61,7 +60,7 @@ export default {
       return block.label + '\n' + block.range;
     },
     onBlockClick(block: any) {
-      if (!block.isAway) this.$emit('block-click', block);
+      this.$emit('block-click', block);
     },
     scrollToNow() {
       const el = this.$refs.timelineScroll as HTMLElement | undefined;
@@ -231,16 +230,6 @@ export default {
   &:hover {
     filter: brightness(1.15);
     z-index: 3;
-  }
-}
-
-.tl-block--away {
-  border: 1px dashed rgba(218, 224, 238, 0.42);
-  cursor: default;
-  opacity: 0.86;
-
-  &:hover {
-    filter: none;
   }
 }
 

@@ -64,16 +64,6 @@ div.chronio-view
       .chronio-metric.goal-metric(v-if="goalSummary.total > 0")
         span.label Goals:
         span.value {{ goalSummary.hit }}/{{ goalSummary.total }}
-      .chronio-afk-badge(:class="afkStatus" :title="afkStatusTitle")
-        | {{ afkStatusLabel }}
-      button.chronio-nav-btn.chronio-away-toggle(
-        v-if="selectedPeriod === 'day'"
-        :class="{active: showAwayBlocks}"
-        :disabled="afkStatus !== 'active'"
-        :aria-pressed="showAwayBlocks ? 'true' : 'false'"
-        :title="awayToggleTitle"
-        @click="showAwayBlocks = !showAwayBlocks"
-      ) {{ awayToggleLabel }}
       .chronio-search(:class="{active: isSearchActive}")
         input(
           ref="searchInput"
@@ -137,14 +127,13 @@ div.chronio-view
           span Categories
           button.sidebar-add-btn(@click.stop="createTopCategory") +
 
-        template(v-for="row in sidebarFlatTree" :key="row.key")
+        .sidebar-row-wrapper(v-for="row in sidebarFlatTree" :key="row.key")
           //- Inline-create row (#38)
           .sidebar-inline-create(
             v-if="row.isInlineCreate"
             :style="{paddingLeft: (row.depth * 14 + 10) + 'px'}"
           )
             span.sr-expand-spacer
-            .sr-dot(:style="{background: '#4b8bff'}")
             input.sr-rename-input(
               ref="inlineCreateInput"
               :value="inlineCreateValue"
@@ -174,10 +163,6 @@ div.chronio-view
             .sr-main
               span.sr-expand-btn(v-if="row.hasChildren" @click.stop="toggleSidebarExpand(row)") {{ sidebarExpanded[row.key] ? '▾' : '▸' }}
               span.sr-expand-spacer(v-else)
-              .sr-dot(
-                :style="{background: row.color}"
-                @click.stop="openColorPicker(row, $event)"
-              )
               input.sr-rename-input(
                 v-if="renamingKey === row.key"
                 ref="renameInput"
@@ -189,11 +174,6 @@ div.chronio-view
                 @click.stop
               )
               span.sr-name(v-else :title="row.label") {{ row.label }}
-              span.sr-score-dot(
-                v-if="row.score !== 0"
-                :class="row.score > 0 ? 'score-productive' : 'score-distracting'"
-                :title="row.score > 0 ? 'Productive' : 'Distracting'"
-              )
               span.sr-time {{ row.time }}
               span.sr-drag-handle(
                 draggable="true"
@@ -207,18 +187,6 @@ div.chronio-view
                 span(:class="{hit: row.goal.hit}") {{ row.goal.hit ? 'Hit' : 'In progress' }}
               .sr-goal-track
                 .sr-goal-fill(:class="{hit: row.goal.hit}" :style="{width: row.goal.percent + '%'}")
-            .sr-sparkline(
-              v-if="row.sparkline"
-              :class="{loading: row.sparklineLoading, empty: row.sparklineEmpty}"
-              :aria-label="'Recent activity for ' + row.label"
-            )
-              span.sr-sparkline-bar(
-                v-for="bar in row.sparkline"
-                :key="bar.date"
-                :class="{zero: bar.duration === 0}"
-                :style="{height: bar.height + '%', background: row.color}"
-                :title="bar.title"
-              )
 
         //- Mini calendar (#52)
         .sidebar-calendar
@@ -245,6 +213,7 @@ div.chronio-view
         )
           .ctx-item(@click="startRename(ctxMenu.row)") Rename
           .ctx-item(@click="createChildCategory(ctxMenu.row)") Add subcategory
+          .ctx-item(@click="openColorPicker(ctxMenu.row, $event)") Color
           .ctx-divider
           .ctx-score-row
             span Score:
@@ -722,14 +691,9 @@ export default {
       searchLoadedRangeKey: '' as string,
       searchDebounceTimer: null as any,
       searchRequestId: 0 as number,
-      sparklineEvents: [] as any[],
-      sparklineLoading: false as boolean,
-      sparklineLoadedRangeKey: '' as string,
-      sparklineRequestId: 0 as number,
       showWeeklyReport: false as boolean,
       showDatePicker: false as boolean,
       showExportMenu: false as boolean,
-      showAwayBlocks: true as boolean,
       loading: true as boolean,
       selectedEvent: null as any,
       windowEvents: [] as any[],
@@ -877,33 +841,6 @@ export default {
 
     scopedActiveWindowEventsByDate(): Record<string, any[]> {
       return chronioEventsByDate(this.scopedActiveWindowEvents as any[]);
-    },
-
-    afkStatus(): 'active' | 'no-data' {
-      if (this.loading) return 'no-data';
-      return this.notAfkIntervals.length > 0 ? 'active' : 'no-data';
-    },
-
-    afkStatusLabel(): string {
-      return this.afkStatus === 'active' ? 'AFK filter on' : 'AFK no data';
-    },
-
-    afkStatusTitle(): string {
-      return this.afkStatus === 'active'
-        ? 'AFK filtering is active. Idle time is excluded from tracked activity.'
-        : 'No AFK data. Idle time cannot be filtered from tracked activity.';
-    },
-
-    awayToggleLabel(): string {
-      if (this.afkStatus !== 'active') return 'Away unavailable';
-      return this.showAwayBlocks ? 'Away shown' : 'Away hidden';
-    },
-
-    awayToggleTitle(): string {
-      if (this.afkStatus !== 'active') return 'Away blocks need AFK data.';
-      return this.showAwayBlocks
-        ? 'Away blocks are shown on the daily timeline. Click to hide them.'
-        : 'Away blocks are hidden on the daily timeline. Click to show them.';
     },
 
     calendarMonthLabel(): string {
@@ -1198,33 +1135,6 @@ export default {
       return result;
     },
 
-    categorySparklineDates(): { date: string; title: string }[] {
-      if (!this.selectedDate) return [];
-      return Array.from({ length: 7 }, (_, index) => {
-        const day = moment(this.selectedDate).subtract(6 - index, 'days');
-        return {
-          date: day.format('YYYY-MM-DD'),
-          title: day.format('ddd, MMM D'),
-        };
-      });
-    },
-
-    categorySparklineDurations(): Record<string, Record<string, number>> {
-      const byCategory: Record<string, Record<string, number>> = {};
-      const dates = new Set((this.categorySparklineDates as any[]).map((day: any) => day.date));
-      for (const event of this.sparklineEvents as any[]) {
-        const date = moment(event.timestamp).format('YYYY-MM-DD');
-        if (!dates.has(date)) continue;
-        const category = this.classifyEventCategory(event);
-        for (let depth = 1; depth <= category.length; depth++) {
-          const key = category.slice(0, depth).join('>');
-          if (!byCategory[key]) byCategory[key] = {};
-          byCategory[key][date] = (byCategory[key][date] || 0) + (event.duration || 0);
-        }
-      }
-      return byCategory;
-    },
-
     unassignedTime(): string {
       const uncat = (this.activitiesTree as any[]).find(
         (n: any) => n.category[0] === 'Uncategorized'
@@ -1245,7 +1155,6 @@ export default {
           const dur = durations[key] || 0;
           const score = catStore.get_category_score(cat.name);
           const targetMinutes = Number(cat.data?.dailyTargetMinutes || 0);
-          const sparkline = this.categorySparklineBars(key);
           const goal =
             this.selectedPeriod === 'day' && targetMinutes > 0
               ? {
@@ -1265,10 +1174,6 @@ export default {
             time: dur > 0 ? formatDuration(dur) : '',
             score,
             goal,
-            sparkline,
-            sparklineEmpty:
-              sparkline && sparkline.every((bar: any) => bar.duration === 0),
-            sparklineLoading: !!sparkline && this.sparklineLoading,
             dailyTargetMinutes: targetMinutes > 0 ? targetMinutes : null,
           });
           if (expanded[key] && cat.children && cat.children.length > 0) {
@@ -1615,60 +1520,10 @@ export default {
         });
     },
 
-    awayTimelineBlocks(): any[] {
-      if (!this.showAwayBlocks || this.selectedPeriod !== 'day') return [];
-
-      const dayStart = moment(this.selectedDate).startOf('day').valueOf();
-      const dayEnd = moment(this.selectedDate).add(1, 'day').startOf('day').valueOf();
-      const thresholdMinutes = Math.max(1, Number(this.settingsStore.chronioAwayThresholdMinutes) || 5);
-      const thresholdMs = thresholdMinutes * 60000;
-      const activeIntervals = [...this.notAfkIntervals]
-        .map((interval: { start: number; end: number }) => ({
-          start: Math.max(dayStart, interval.start),
-          end: Math.min(dayEnd, interval.end),
-        }))
-        .filter((interval: { start: number; end: number }) => interval.end > interval.start)
-        .sort((a: { start: number }, b: { start: number }) => a.start - b.start);
-
-      const mergedIntervals: { start: number; end: number }[] = [];
-      for (const interval of activeIntervals) {
-        const prev = mergedIntervals[mergedIntervals.length - 1];
-        if (prev && interval.start <= prev.end) {
-          prev.end = Math.max(prev.end, interval.end);
-        } else {
-          mergedIntervals.push({ ...interval });
-        }
-      }
-
-      const blocks: any[] = [];
-      for (let i = 1; i < mergedIntervals.length; i++) {
-        const startMs = mergedIntervals[i - 1].end;
-        const endMs = mergedIntervals[i].start;
-        const durationMs = endMs - startMs;
-        if (durationMs < thresholdMs) continue;
-
-        const range = formatHHMM(startMs) + ' – ' + formatHHMM(endMs);
-        blocks.push({
-          label: 'Away',
-          catKey: '__away__',
-          range,
-          color: '#495161',
-          tooltip: 'Away\n' + formatDuration(durationMs / 1000) + '\n' + range,
-          isAway: true,
-          startMs,
-          endMs,
-        });
-      }
-      return blocks;
-    },
-
     timelineCanvas(): { blocks: any[]; hours: any[]; screenshotMarkers: any[]; nowPx: number | null; totalHeight: number; canvasStartMs: number } {
       const dayStart = moment(this.selectedDate).startOf('day').valueOf();
       const SCALE = HOUR_PX / 3600000; // px per millisecond
-      const blocks_raw = [
-        ...(this.timeline as any[]),
-        ...(this.awayTimelineBlocks as any[]),
-      ].sort((a: any, b: any) => a.startMs - b.startMs);
+      const blocks_raw = [...(this.timeline as any[])].sort((a: any, b: any) => a.startMs - b.startMs);
 
       // Default visible window: 8am–10pm
       const default8am = moment(this.selectedDate).hour(8).startOf('hour').valueOf();
@@ -1963,84 +1818,6 @@ export default {
         timeLabel: formatHHMM(start.toISOString()) + ' - ' + formatHHMM(end.toISOString()),
         title: identity.title,
       };
-    },
-
-    categorySparklineBars(key: string): any[] | null {
-      if (
-        this.selectedPeriod !== 'day' ||
-        !this.settingsStore.chronioCategorySparklinesVisible
-      ) {
-        return null;
-      }
-
-      const dates = this.categorySparklineDates as any[];
-      const durations = this.categorySparklineDurations[key] || {};
-      const maxDuration = Math.max(0, ...dates.map((day: any) => durations[day.date] || 0));
-      const loadingHeights = [26, 54, 38, 70, 44, 62, 34];
-      return dates.map((day: any, index: number) => {
-        const duration = durations[day.date] || 0;
-        return {
-          date: day.date,
-          duration,
-          height: this.sparklineLoading && !this.sparklineLoadedRangeKey
-            ? loadingHeights[index]
-            : duration > 0 && maxDuration > 0
-              ? Math.max(18, Math.round((duration / maxDuration) * 100))
-              : 0,
-          title: this.sparklineLoading && !this.sparklineLoadedRangeKey
-            ? 'Loading recent activity'
-            : day.title + ': ' + formatDuration(duration),
-        };
-      });
-    },
-
-    async loadCategorySparklines() {
-      if (
-        !this.host ||
-        this.selectedPeriod !== 'day' ||
-        !this.settingsStore.chronioCategorySparklinesVisible
-      ) {
-        this.sparklineRequestId++;
-        this.sparklineEvents = [];
-        this.sparklineLoading = false;
-        this.sparklineLoadedRangeKey = '';
-        return;
-      }
-
-      const end = moment(this.selectedDate).add(1, 'day').startOf('day');
-      const start = end.clone().subtract(7, 'days');
-      const rangeKey = start.format('YYYY-MM-DD') + '/' + end.format('YYYY-MM-DD');
-      if (this.sparklineLoadedRangeKey === rangeKey) return;
-
-      const requestId = ++this.sparklineRequestId;
-      this.sparklineEvents = [];
-      this.sparklineLoading = true;
-      this.sparklineLoadedRangeKey = '';
-
-      const allHosts: string[] = (this.bucketsStore.hosts as string[])
-        .filter((host: string) => host && host !== 'unknown' && !/^\d+\.\d+\.\d+\.\d+$/.test(host));
-      const windowBuckets: string[] = allHosts.flatMap((host: string) => this.bucketsStore.bucketsWindow(host));
-      const afkBuckets: string[] = allHosts.flatMap((host: string) => this.bucketsStore.bucketsAFK(host));
-      const params = { start: start.toDate(), end: end.toDate(), limit: -1 };
-
-      try {
-        const [windowEventArrays, afkEventArrays] = await Promise.all([
-          Promise.all(windowBuckets.map((bucket: string) =>
-            getClient().getEvents(bucket, params).catch(() => [])
-          )),
-          Promise.all(afkBuckets.map((bucket: string) =>
-            getClient().getEvents(bucket, params).catch(() => [])
-          )),
-        ]);
-        if (requestId !== this.sparklineRequestId) return;
-        this.sparklineEvents = this.activeEventsFor(windowEventArrays.flat(), afkEventArrays.flat());
-        this.sparklineLoadedRangeKey = rangeKey;
-      } catch (error) {
-        if (requestId !== this.sparklineRequestId) return;
-        this.sparklineEvents = [];
-      } finally {
-        if (requestId === this.sparklineRequestId) this.sparklineLoading = false;
-      }
     },
 
     clearAdvancedSearch() {
@@ -2418,7 +2195,6 @@ export default {
     },
 
     onTimelineBlockClick(block: any) {
-      if (block.isAway) return;
       // Switch to chrono view and scroll to this block's time
       this.setViewMode('chrono');
       this.$nextTick(() => {
@@ -3350,7 +3126,6 @@ export default {
 
         this.windowEvents = windowEvents;
         this.afkEvents = afkEvents;
-        this.loadCategorySparklines();
         this.screenshotEvents = mergeEvents(screenshotEvtArrays);
         this.screenshotLoading = false;
         if (!silent) {
@@ -3591,11 +3366,6 @@ export default {
   &:disabled { opacity: 0.3; cursor: not-allowed; }
 }
 
-.chronio-away-toggle.active {
-  border-color: rgba(119, 130, 154, 0.8);
-  color: var(--text);
-}
-
 .chronio-chip {
   padding: 5px 12px;
   border-radius: 10px;
@@ -3681,17 +3451,6 @@ export default {
     min-width: 52px;
     text-align: right;
   }
-}
-
-.chronio-afk-badge {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 8px;
-  border-radius: 10px;
-  white-space: nowrap;
-  cursor: default;
-  &.active { background: rgba(29, 185, 84, 0.15); color: #1db954; }
-  &.no-data { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
 }
 
 .chronio-search {
@@ -3909,6 +3668,10 @@ export default {
   color: var(--muted);
 }
 
+.sidebar-row-wrapper {
+  display: contents;
+}
+
 .sidebar-add-btn {
   background: transparent;
   border: 1px solid var(--border);
@@ -3975,33 +3738,6 @@ export default {
   height: 100%;
   min-width: 2px;
   &.hit { background: #1db954; }
-}
-
-.sr-sparkline {
-  align-items: flex-end;
-  display: flex;
-  gap: 2px;
-  height: 12px;
-  padding-left: 26px;
-}
-
-.sr-sparkline-bar {
-  border-radius: 2px 2px 0 0;
-  flex: 1;
-  min-height: 2px;
-  opacity: 0.72;
-}
-
-.sr-sparkline-bar.zero {
-  opacity: 0.18;
-}
-
-.sr-sparkline.empty .sr-sparkline-bar {
-  opacity: 0.18;
-}
-
-.sr-sparkline.loading .sr-sparkline-bar {
-  opacity: 0.28;
 }
 
 .sr-expand-btn {
@@ -4191,15 +3927,6 @@ export default {
   &.neutral.active { background: rgba(255,255,255,0.1); border-color: var(--border-hover); color: var(--text); }
 }
 
-.sr-score-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  &.score-productive { background: #1db954; }
-  &.score-distracting { background: #ef4444; }
-}
-
 /* #7: Color picker popover */
 .color-picker-popover {
   position: fixed;
@@ -4245,16 +3972,6 @@ export default {
     cursor: pointer;
     padding: 1px;
   }
-}
-
-.sr-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  cursor: pointer;
-  transition: transform 0.15s;
-  &:hover { transform: scale(1.4); }
 }
 
 /* #3: Drag styles */
