@@ -30,13 +30,13 @@ div.trends-view
     main.trends-main
       .trends-message(v-if="loading")
         .loading-line
-        strong Loading {{ rangeDays }} days of trend data
-        span(v-if="heatmapProgress") {{ heatmapProgress }}
+        strong Loading {{ rangeDays }} days of trend summaries
+        span(v-if="dailyProgress") {{ dailyProgress }}
       .trends-message.error(v-else-if="error")
         strong Trend data could not be loaded
         span {{ error }}
         button(@click="loadTrends") Retry
-      .trends-message(v-else-if="!host")
+      .trends-message(v-else-if="!statsAvailable")
         strong No activity buckets found
         span Chronio needs window and AFK activity before it can calculate trends.
       template(v-else)
@@ -77,7 +77,11 @@ div.trends-view
           header
             h2 Productive hours
             span Average category score by weekday and hour
-          .heatmap(v-if="!heatmapEmpty")
+          .heatmap-loading(v-if="heatmapLoading")
+            .loading-line
+            span {{ heatmapProgress || 'Loading hourly detail' }}
+          .heatmap-empty.error(v-else-if="heatmapError") {{ heatmapError }}
+          .heatmap(v-else-if="!heatmapEmpty")
             .heatmap-corner
             .heatmap-hour(v-for="hour in heatmapHours" :key="'hour-' + hour") {{ formatHeatmapHour(hour) }}
             template(v-for="row in heatmapRows")
@@ -97,7 +101,6 @@ import moment from 'moment';
 import 'chart.js/auto';
 import { Line } from 'vue-chartjs/legacy';
 import queries from '~/queries';
-import { useActivityStore } from '~/stores/activity';
 import { useBucketsStore } from '~/stores/buckets';
 import { useCategoryStore } from '~/stores/categories';
 import { useSettingsStore } from '~/stores/settings';
@@ -136,6 +139,11 @@ interface HourPoint {
   events: IEvent[];
 }
 
+interface StatsCacheEntry<T> {
+  touchedAt: number;
+  value: T;
+}
+
 interface HeatmapCell {
   key: string;
   score: number;
@@ -144,9 +152,13 @@ interface HeatmapCell {
 }
 
 const RANGES = [30, 90];
+const DAILY_QUERY_CHUNK = 7;
 const HEATMAP_QUERY_CHUNK = 24 * 5;
+const STATS_CACHE_MAX_ENTRIES = 260;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const CATEGORY_SEPARATOR = '\u001f';
+const dailyPointCache: Record<string, StatsCacheEntry<DailyPoint>> = {};
+const hourlyPointCache: Record<string, StatsCacheEntry<HourPoint>> = {};
 
 function categoryName(event: IEvent): string[] {
   const name = event && event.data && event.data['$category'];
@@ -157,13 +169,29 @@ function periodStart(period: string): moment.Moment {
   return moment(period.split('/')[0]);
 }
 
+function cacheGet<T>(cache: Record<string, StatsCacheEntry<T>>, key: string): T | null {
+  const entry = cache[key];
+  if (!entry) return null;
+  entry.touchedAt = Date.now();
+  return entry.value;
+}
+
+function cacheSet<T>(cache: Record<string, StatsCacheEntry<T>>, key: string, value: T) {
+  cache[key] = { touchedAt: Date.now(), value };
+  const keys = Object.keys(cache);
+  if (keys.length <= STATS_CACHE_MAX_ENTRIES) return;
+  keys
+    .sort((left: string, right: string) => cache[left].touchedAt - cache[right].touchedAt)
+    .slice(0, keys.length - STATS_CACHE_MAX_ENTRIES)
+    .forEach((oldKey: string) => delete cache[oldKey]);
+}
+
 export default {
   name: 'ChronioTrends',
   components: { LineChart: Line },
 
   data() {
     return {
-      activityStore: useActivityStore(),
       bucketsStore: useBucketsStore(),
       categoryStore: useCategoryStore(),
       settingsStore: useSettingsStore(),
@@ -172,7 +200,10 @@ export default {
       dailyPoints: [] as DailyPoint[],
       hourlyPoints: [] as HourPoint[],
       loading: true,
+      heatmapLoading: false,
       error: '',
+      heatmapError: '',
+      dailyProgress: '',
       heatmapProgress: '',
       loadSequence: 0,
     };
@@ -190,6 +221,32 @@ export default {
         }
       }
       return '';
+    },
+
+    statsBuckets(): {
+      afk: string[];
+      android: string[];
+      browser: string[];
+      stopwatch: string[];
+      window: string[];
+    } {
+      if (!this.host) {
+        return { afk: [], android: [], browser: [], stopwatch: [], window: [] };
+      }
+      return {
+        afk: this.bucketsStore.bucketsAFK(this.host),
+        android: this.bucketsStore.bucketsAndroid(this.host),
+        browser: this.bucketsStore.bucketsBrowser(this.host),
+        stopwatch: this.bucketsStore.bucketsStopwatch(this.host),
+        window: this.bucketsStore.bucketsWindow(this.host),
+      };
+    },
+
+    statsAvailable(): boolean {
+      return (
+        this.statsBuckets.android.length > 0 ||
+        (this.statsBuckets.afk.length > 0 && this.statsBuckets.window.length > 0)
+      );
     },
 
     rangeTimeperiod(): TimePeriod {
@@ -492,33 +549,29 @@ export default {
     async loadTrends() {
       const sequence = ++this.loadSequence;
       this.loading = true;
+      this.heatmapLoading = false;
       this.error = '';
+      this.heatmapError = '';
+      this.dailyProgress = '';
       this.heatmapProgress = '';
       this.dailyPoints = [];
       this.hourlyPoints = [];
 
       try {
-        if (!this.host) return;
+        if (!this.statsAvailable) return;
 
-        const queryOptions = {
-          host: this.host,
-          timeperiod: this.rangeTimeperiod,
-          filter_afk: true,
-          include_audible: false,
-          filter_categories: undefined,
-          always_active_pattern: this.settingsStore.always_active_pattern,
-          dontQueryInactive: false,
-        };
-
-        await this.activityStore.get_buckets(queryOptions);
-        this.activityStore.set_available();
-        if (!this.activityStore.category.available) return;
-
-        await this.activityStore.query_category_time_by_period(queryOptions);
+        const started = Date.now();
+        this.dailyPoints = await this.loadDailySummaries(this.rangeTimeperiod, sequence);
         if (sequence !== this.loadSequence) return;
-
-        this.dailyPoints = this.toDailyPoints(this.activityStore.category.by_period || {});
-        await this.loadHourlyHeatmap(queryOptions.timeperiod, sequence);
+        this.loading = false;
+        this.dailyProgress = '';
+        console.info(
+          '[Chronio Stats] daily summaries loaded in ' +
+            `${Date.now() - started}ms for ${this.rangeDays} days`
+        );
+        if (this.hasDailyData) {
+          await this.loadHourlyHeatmap(this.rangeTimeperiod, sequence);
+        }
       } catch (err) {
         if (sequence === this.loadSequence) {
           this.error = err instanceof Error ? err.message : String(err);
@@ -526,23 +579,97 @@ export default {
       } finally {
         if (sequence === this.loadSequence) {
           this.loading = false;
+          this.heatmapLoading = false;
+          this.dailyProgress = '';
           this.heatmapProgress = '';
         }
       }
     },
 
-    toDailyPoints(byPeriod: Record<string, PeriodResult>): DailyPoint[] {
-      return Object.entries(byPeriod)
-        .map(([period, result]: [string, PeriodResult]) => {
-          const events = result && result.cat_events ? result.cat_events : [];
-          return {
-            date: periodStart(period).format('YYYY-MM-DD'),
-            productivity: this.productivityPercent(events),
-            trackedSeconds: this.trackedSeconds(events),
-            categories: this.categoryDurations(events),
-          };
-        })
-        .sort((left: DailyPoint, right: DailyPoint) => left.date.localeCompare(right.date));
+    dailyPeriods(timeperiod: TimePeriod): string[] {
+      return timeperiodsDaysOfPeriod(timeperiod)
+        .map((period: TimePeriod) => timeperiodToStr(period))
+        .filter((period: string) => periodStart(period).isBefore(moment()));
+    },
+
+    statsCachePrefix(): string {
+      return [
+        this.host,
+        (this.statsBuckets.window || []).join(','),
+        (this.statsBuckets.afk || []).join(','),
+        (this.statsBuckets.browser || []).join(','),
+        this.settingsStore.always_active_pattern || '',
+        JSON.stringify(this.categoryStore.classes_for_query),
+      ].join('|');
+    },
+
+    isCacheablePeriod(period: string): boolean {
+      const today = moment(get_today_with_offset(this.settingsStore.startOfDay)).startOf('day');
+      return moment(period.split('/')[1]).isSameOrBefore(today);
+    },
+
+    periodCacheKey(prefix: string, period: string): string {
+      return `${prefix}|${period}`;
+    },
+
+    pointsForPeriods<T>(periods: string[], pointsByPeriod: Record<string, T>): T[] {
+      return periods
+        .map((period: string) => pointsByPeriod[period])
+        .filter((point: T | undefined): point is T => !!point);
+    },
+
+    periodResultToDailyPoint(period: string, result: PeriodResult): DailyPoint {
+      const events = result && result.cat_events ? result.cat_events : [];
+      return {
+        date: periodStart(period).format('YYYY-MM-DD'),
+        productivity: this.productivityPercent(events),
+        trackedSeconds: this.trackedSeconds(events),
+        categories: this.categoryDurations(events),
+      };
+    },
+
+    async loadDailySummaries(timeperiod: TimePeriod, sequence: number): Promise<DailyPoint[]> {
+      const periods = this.dailyPeriods(timeperiod);
+      const prefix = this.statsCachePrefix();
+      const pointsByPeriod: Record<string, DailyPoint> = {};
+      const pendingPeriods: string[] = [];
+
+      periods.forEach((period: string) => {
+        const cached = cacheGet(dailyPointCache, this.periodCacheKey(prefix, period));
+        if (cached) {
+          pointsByPeriod[period] = cached;
+        } else {
+          pendingPeriods.push(period);
+        }
+      });
+
+      if (pendingPeriods.length === 0) {
+        this.dailyProgress = 'Using cached daily summaries';
+        return this.pointsForPeriods(periods, pointsByPeriod);
+      }
+
+      const query = this.categoryQuery();
+      let loaded = 0;
+      for (let offset = 0; offset < pendingPeriods.length; offset += DAILY_QUERY_CHUNK) {
+        if (sequence !== this.loadSequence) return [];
+        const chunk = pendingPeriods.slice(offset, offset + DAILY_QUERY_CHUNK);
+        const results = await getClient().query(chunk, query, {
+          name: 'chronioStatsDaily',
+          verbose: false,
+        });
+        results.forEach((result: PeriodResult, index: number) => {
+          const period = chunk[index];
+          const point = this.periodResultToDailyPoint(period, result);
+          pointsByPeriod[period] = point;
+          if (this.isCacheablePeriod(period)) {
+            cacheSet(dailyPointCache, this.periodCacheKey(prefix, period), point);
+          }
+        });
+        loaded += chunk.length;
+        this.dailyProgress = `Loaded daily summaries ${loaded} of ${pendingPeriods.length}`;
+      }
+
+      return this.pointsForPeriods(periods, pointsByPeriod);
     },
 
     categoryDurations(events: IEvent[]): CategoryDuration[] {
@@ -592,23 +719,23 @@ export default {
 
     categoryQuery() {
       const shared = {
-        bid_browsers: this.activityStore.buckets.browser,
+        bid_browsers: this.statsBuckets.browser,
         bid_stopwatch: undefined,
         categories: this.categoryStore.classes_for_query,
         filter_categories: undefined,
       };
 
-      if (this.activityStore.buckets.android[0]) {
+      if (this.statsBuckets.android[0]) {
         return queries.categoryQuery({
           ...shared,
-          bid_android: this.activityStore.buckets.android[0],
+          bid_android: this.statsBuckets.android[0],
         });
       }
 
       return queries.categoryQuery({
         ...shared,
-        bid_afk: this.activityStore.buckets.afk[0],
-        bid_window: this.activityStore.buckets.window[0],
+        bid_afk: this.statsBuckets.afk[0],
+        bid_window: this.statsBuckets.window[0],
         filter_afk: true,
         always_active_pattern: this.settingsStore.always_active_pattern,
       });
@@ -617,28 +744,67 @@ export default {
     async loadHourlyHeatmap(timeperiod: TimePeriod, sequence: number) {
       const periods = this.hourlyPeriods(timeperiod);
       const query = this.categoryQuery();
-      const points: HourPoint[] = [];
+      const prefix = this.statsCachePrefix();
+      const pointsByPeriod: Record<string, HourPoint> = {};
+      const pendingPeriods: string[] = [];
 
-      for (let offset = 0; offset < periods.length; offset += HEATMAP_QUERY_CHUNK) {
-        if (sequence !== this.loadSequence) return;
-        const chunk = periods.slice(offset, offset + HEATMAP_QUERY_CHUNK);
-        this.heatmapProgress = `Loading hourly detail ${Math.min(
-          offset + chunk.length,
-          periods.length
-        )} of ${periods.length}`;
-        const results = await getClient().query(chunk, query, {
-          name: 'chronioTrendsHeatmap',
-          verbose: false,
-        });
-        results.forEach((result: PeriodResult, index: number) => {
-          points.push({
-            period: chunk[index],
-            events: result && result.cat_events ? result.cat_events : [],
-          });
-        });
+      periods.forEach((period: string) => {
+        const cached = cacheGet(hourlyPointCache, this.periodCacheKey(prefix, period));
+        if (cached) {
+          pointsByPeriod[period] = cached;
+        } else {
+          pendingPeriods.push(period);
+        }
+      });
+
+      this.hourlyPoints = this.pointsForPeriods(periods, pointsByPeriod);
+      if (pendingPeriods.length === 0) {
+        this.heatmapProgress = '';
+        return;
       }
 
-      if (sequence === this.loadSequence) this.hourlyPoints = points;
+      this.heatmapLoading = true;
+      this.heatmapError = '';
+      const started = Date.now();
+      let loaded = 0;
+
+      try {
+        for (let offset = 0; offset < pendingPeriods.length; offset += HEATMAP_QUERY_CHUNK) {
+          if (sequence !== this.loadSequence) return;
+          const chunk = pendingPeriods.slice(offset, offset + HEATMAP_QUERY_CHUNK);
+          const results = await getClient().query(chunk, query, {
+            name: 'chronioTrendsHeatmap',
+            verbose: false,
+          });
+          results.forEach((result: PeriodResult, index: number) => {
+            const period = chunk[index];
+            const point = {
+              period,
+              events: result && result.cat_events ? result.cat_events : [],
+            };
+            pointsByPeriod[period] = point;
+            if (this.isCacheablePeriod(period)) {
+              cacheSet(hourlyPointCache, this.periodCacheKey(prefix, period), point);
+            }
+          });
+          loaded += chunk.length;
+          this.hourlyPoints = this.pointsForPeriods(periods, pointsByPeriod);
+          this.heatmapProgress = `Loaded hourly detail ${loaded} of ${pendingPeriods.length}`;
+        }
+        console.info(
+          '[Chronio Stats] hourly heatmap loaded in ' +
+            `${Date.now() - started}ms for ${this.rangeDays} days`
+        );
+      } catch (err) {
+        if (sequence === this.loadSequence) {
+          this.heatmapError = err instanceof Error ? err.message : String(err);
+        }
+      } finally {
+        if (sequence === this.loadSequence) {
+          this.heatmapLoading = false;
+          this.heatmapProgress = '';
+        }
+      }
     },
 
     colorWithAlpha(color: string, alpha: number): string {
@@ -1013,6 +1179,15 @@ export default {
   border: 1px dashed var(--border);
   border-radius: 6px;
   color: var(--muted);
+  padding: 18px;
+}
+
+.heatmap-loading {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  display: grid;
+  gap: 10px;
   padding: 18px;
 }
 
