@@ -3,6 +3,7 @@
 
 import os
 import platform
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -63,20 +64,45 @@ def build_collect(analysis, name, console=True):
     )
 
 
-# Get the current release version
-current_release = subprocess.run(
-    shlex.split("git describe --tags --abbrev=0"),
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    encoding="utf8",
-).stdout.strip()
+def detect_bundle_version():
+    result = subprocess.run(
+        shlex.split("git describe --tags --abbrev=0"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf8",
+    )
+    if result.returncode == 0:
+        tag_version = result.stdout.strip().lstrip("v")
+        if tag_version:
+            return tag_version
+
+    pyproject = Path("pyproject.toml")
+    if pyproject.exists():
+        match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.MULTILINE)
+        if match:
+            return match.group(1).lstrip("v")
+
+    return "0.0.0"
+
+
+current_release = detect_bundle_version()
 print("bundling chronio version " + current_release)
 
-# Get entitlements and codesign identity
+# Get entitlements and codesign identity. Release builds must set
+# CHRONIO_CODESIGN_IDENTITY to a Developer ID Application identity; local QA
+# builds may omit it and will be ad-hoc signed by PyInstaller.
 entitlements_file = Path(".") / "scripts" / "package" / "entitlements.plist"
-codesign_identity = os.environ.get("APPLE_PERSONALID", "").strip()
+codesign_identity = (
+    os.environ.get("CHRONIO_CODESIGN_IDENTITY")
+    or os.environ.get("APPLE_PERSONALID")
+    or ""
+).strip()
 if not codesign_identity:
-    print("Environment variable APPLE_PERSONALID not set. Releases won't be signed.")
+    if os.environ.get("CHRONIO_REQUIRE_DEVELOPER_ID") == "1":
+        raise SystemExit(
+            "CHRONIO_REQUIRE_DEVELOPER_ID=1 requires CHRONIO_CODESIGN_IDENTITY"
+        )
+    print("No Chronio codesign identity set. Local builds will not be release-signed.")
 
 aw_core_path = Path(os.path.dirname(aw_core.__file__))
 restx_path = Path(os.path.dirname(flask_restx.__file__))

@@ -52,6 +52,42 @@ Use the packaged app for issue #16 validation, macOS permission prompts,
 watcher startup, and install behavior because those flows depend on the app
 bundle identity.
 
+The expected V2 packaged UX is the Chronio menu bar app launching the local
+Chronio UI/server. It is not a standalone document-style app window. The app
+should run as a menu bar utility (`LSUIElement = true`), start the local
+server/watchers, and expose Chronio through the local UI.
+
+## Verification Commands
+
+Use the package verifier for the reviewed artifact:
+
+```sh
+make verify-macos-package
+```
+
+For an unsigned local QA artifact, the same verifier can document the exact
+Gatekeeper blocker without treating it as a release pass:
+
+```sh
+CHRONIO_ALLOW_GATEKEEPER_REJECT=1 make verify-macos-package
+```
+
+The release-acceptance run must not set `CHRONIO_ALLOW_GATEKEEPER_REJECT`.
+It is expected to pass `codesign --verify`, `spctl -a -vv -t open`, DMG
+verification, stapled notarization validation, DMG mount validation, and
+mounted-app `codesign --verify`.
+
+For release builds, import the Developer ID certificate first and resolve the
+signing identity before building:
+
+```sh
+export CHRONIO_REQUIRE_DEVELOPER_ID=1
+export CHRONIO_CODESIGN_IDENTITY="$(./scripts/package/resolve_macos_signing_identity.sh)"
+make dist/Chronio.dmg
+make dist/notarize
+make verify-macos-package
+```
+
 ## Permission Regrant Test Plan
 
 The bundle identifier and signed app identity change from ActivityWatch to
@@ -75,12 +111,15 @@ Developer inputs before the issue acceptance criteria can be verified:
 - Active Apple Developer Program membership.
 - A Developer ID Application signing identity importable by CI as
   `CERTIFICATE_MACOS_P12_BASE64` and `CERTIFICATE_MACOS_P12_PASSWORD`.
-- The signing identity selector in `APPLE_PERSONALID`.
+- Optionally, a signing identity selector in `APPLE_PERSONALID`. If it is not
+  set, CI resolves the first imported `Developer ID Application` identity.
 - Notarization credentials in `APPLE_EMAIL`, `APPLE_PASSWORD`, and
   `APPLE_TEAMID` for `xcrun notarytool`.
 
-The current CI script only attempts the signing/notarization branch when Apple
-credentials are present. Without them, build output is useful for local
+The CI script only attempts the signing/notarization branch when Apple
+credentials are present. With credentials, the build fails unless it can resolve
+a `Developer ID Application` identity, notarize and staple the app/DMG, and pass
+`make verify-macos-package`. Without them, build output is useful for local
 packaging tests but it must not be described as signed or notarized.
 
 Signed/notarized install validation remains blocked until the Apple Developer

@@ -182,6 +182,9 @@ jobs:
         # Only load key & sign if env vars for signing exists
         if [ -n "$APPLE_EMAIL" ]; then
           ./scripts/ci/import-macos-p12.sh
+          export CHRONIO_REQUIRE_DEVELOPER_ID=1
+          export CHRONIO_CODESIGN_IDENTITY="$(./scripts/package/resolve_macos_signing_identity.sh)"
+          export APPLE_PERSONALID="$CHRONIO_CODESIGN_IDENTITY"
         fi
 
         # Build .app and .dmg
@@ -190,7 +193,7 @@ jobs:
 
         # codesign and notarize
         if [ -n "$APPLE_EMAIL" ]; then
-          codesign --verbose -s "${APPLE_PERSONALID}" dist/Chronio.dmg
+          codesign --force --timestamp --verbose -s "$CHRONIO_CODESIGN_IDENTITY" dist/Chronio.dmg
 
           # Run prechecks
           brew install akeru-inc/tap/xcnotary
@@ -199,12 +202,15 @@ jobs:
 
           # Notarize
           make dist/notarize
+          make verify-macos-package
+        else
+          CHRONIO_ALLOW_GATEKEEPER_REJECT=1 make verify-macos-package
         fi
         mv dist/Chronio.dmg dist/chronio-$(scripts/package/getversion.sh)-macos-x86_64.dmg
       env:
         APPLE_EMAIL: ${{ secrets.APPLE_EMAIL }}
         APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-        APPLE_PERSONALID: ${{ secrets.APPLE_TEAMID }} # APPLE_PERSONAL_ID == APPLE_TEAM_ID for personal accounts
+        APPLE_PERSONALID: ${{ secrets.APPLE_PERSONALID }}
         APPLE_TEAMID: ${{ secrets.APPLE_TEAMID }}
         CERTIFICATE_MACOS_P12_BASE64: ${{ secrets.CERTIFICATE_MACOS_P12_BASE64 }}
         CERTIFICATE_MACOS_P12_PASSWORD: ${{ secrets.CERTIFICATE_MACOS_P12_PASSWORD }}
