@@ -227,9 +227,14 @@ This repo is a bundle of the core components and official modules of ActivityWat
 ActivityWatch has two server implementations:
 
 - `aw-server` (Python) - The current default implementation
-- `aw-server-rust` - A Rust implementation that is the planned future default
+- `aw-server-rust` - An upstream Rust implementation that Chronio does not
+  build or package
 
 Both provide a REST API to a datastore and query engine, and serve the web interface developed in the `aw-webui` project (which provides the frontend).
+
+Chronio currently uses and packages the Python/Flask `aw-server` path. The
+upstream `aw-server-rust` component is not part of Chronio's active
+build/test/package surface.
 
 The REST API includes:
 
@@ -273,4 +278,3 @@ Want to help? Great! Check out the [CONTRIBUTING.md file](./CONTRIBUTING.md)!
 ## Questions and support
 
 Have a question, suggestion, problem, or just want to say hi? Post on [the forum](https://forum.activitywatch.net/)!
-

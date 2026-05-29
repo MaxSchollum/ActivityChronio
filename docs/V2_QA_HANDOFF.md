@@ -36,7 +36,7 @@ state immediately before the `master` merge:
 | `python3 -m py_compile aw-qt/aw_qt/config.py aw.spec aw-watcher-screenshot/aw_watcher_screenshot/capture.py aw-watcher-screenshot/aw_watcher_screenshot/watcher.py` | Passes |
 | Browser check against local test server | Settings shows screenshot interval, quality, storage, and cleanup controls; Day view shows filmstrip empty state; `Shift+P` shows pause/resume toast; stale Stats "Coming in V2" tooltip removed |
 | `python3.9 -m venv .packaging-venv && source .packaging-venv/bin/activate && poetry install --no-root --no-interaction` | Installs the local unsigned packaging toolchain |
-| `source .packaging-venv/bin/activate && make build AW_EXTRAS=true SKIP_SERVER_RUST=true` | Passes and prepares built modules for PyInstaller |
+| `source .packaging-venv/bin/activate && make build AW_EXTRAS=true` | Passes and prepares built modules for PyInstaller |
 | `source .packaging-venv/bin/activate && make dist/Chronio.dmg` | Produces unsigned `dist/Chronio.app` and `dist/Chronio.dmg` |
 
 ## QA Focus

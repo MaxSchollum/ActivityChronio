@@ -18,8 +18,6 @@ jobs:
     env:
       # Wether to build and include extras (like aw-notify and aw-watcher-input)
       AW_EXTRAS: true
-      # sets the macOS version target, see: https://users.rust-lang.org/t/compile-rust-binary-for-older-versions-of-mac-osx/38695
-      MACOSX_DEPLOYMENT_TARGET: 10.9
     defaults:
       run:
         shell: bash
@@ -29,7 +27,6 @@ jobs:
         os: [ubuntu-22.04, windows-latest, macOS-13]
         python_version: [3.9]
         node_version: [20]
-        skip_rust: [false]
         skip_webui: [false]
         experimental: [false]
 
@@ -84,13 +81,6 @@ jobs:
       with:
         node-version: ${{ matrix.node_version }}
 
-    - name: Set up Rust
-      if: ${{ !matrix.skip_rust }}
-      uses: dtolnay/rust-toolchain@master
-      id: toolchain
-      with:
-        toolchain: stable
-
     - name: Get npm cache dir
       id: npm-cache-dir
       run: |
@@ -106,18 +96,6 @@ jobs:
         key: ${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
         restore-keys: |
           ${{ runner.os }}-${{ env.cache-name }}-
-
-    - name: Cache cargo build
-      uses: actions/cache@v4
-      if: ${{ !matrix.skip_rust && (runner.os != 'macOS') }}  # cache doesn't seem to behave nicely on macOS, see: https://github.com/ActivityWatch/aw-server-rust/issues/180
-      env:
-        cache-name: cargo-build-target
-      with:
-        path: aw-server-rust/target
-        # key needs to contain rustc_hash due to https://github.com/ActivityWatch/aw-server-rust/issues/180
-        key: ${{ runner.os }}-${{ env.cache-name }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-${{ env.cache-name }}-${{ steps.toolchain.outputs.rustc_hash }}-
 
     - name: Install APT dependencies
       if: runner.os == 'Linux'
@@ -154,13 +132,13 @@ jobs:
         python3 -m venv venv
         source venv/bin/activate || source venv/Scripts/activate
         poetry install
-        make build SKIP_WEBUI=${{ matrix.skip_webui }} SKIP_SERVER_RUST=${{ matrix.skip_rust }}
+        make build SKIP_WEBUI=${{ matrix.skip_webui }}
         pip freeze  # output Python packages, useful for debugging dependency versions
 
     - name: Run tests
       run: |
         source venv/bin/activate || source venv/Scripts/activate
-        make test SKIP_SERVER_RUST=${{ matrix.skip_rust }}
+        make test
 
     # Don't run integration tests on Windows, doesn't work for some reason
     - name: Run integration tests
@@ -173,7 +151,7 @@ jobs:
       run: |
         source venv/bin/activate || source venv/Scripts/activate
         poetry install  # run again to ensure we have the correct version of PyInstaller
-        make package SKIP_SERVER_RUST=${{ matrix.skip_rust }}
+        make package
 
     - name: Package dmg
       if: runner.os == 'macOS'

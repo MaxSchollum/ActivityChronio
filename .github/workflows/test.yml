@@ -22,8 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        aw_server_old: ['aw-server', 'aw-server-rust']
-        aw_server_new: ['aw-server', 'aw-server-rust']
+        aw_server_old: ['aw-server']
+        aw_server_new: ['aw-server']
         aw_server_old_args: ['']
         aw_server_new_args: ['']
         include:
@@ -46,11 +46,6 @@ jobs:
             aw_server_new_args: "--storage sqlite"
             old_version: 'v0.12.2'
             new_version: 'v0.13.1'
-        exclude:
-          # rust to python, not supported
-          - aw_server_old: 'aw-server-rust'
-            aw_server_new: 'aw-server'
-
     steps:
       # Will download all artifacts to path
       - name: Download build artifacts
@@ -172,4 +167,3 @@ jobs:
           cat log-old.txt || true
           echo "\n---\n"
           cat log-new.txt || true
-

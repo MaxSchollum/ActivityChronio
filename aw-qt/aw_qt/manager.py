@@ -280,10 +280,12 @@ class Manager:
                 logger.error(f"Module {name} not found")
         autostart_modules = list(set(autostart_modules))
 
-        # Start aw-server-rust first
-        if "aw-server-rust" in autostart_modules:
-            self.start("aw-server-rust")
-        elif "aw-server" in autostart_modules:
+        # Chronio uses the Python/Flask server even if an old config still
+        # mentions the upstream Rust server.
+        server_requested = (
+            "aw-server" in autostart_modules or "aw-server-rust" in autostart_modules
+        )
+        if server_requested:
             self.start("aw-server")
 
         autostart_modules = list(

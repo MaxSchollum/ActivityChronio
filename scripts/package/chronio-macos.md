@@ -20,9 +20,18 @@ before identity-sensitive distribution work is added.
 
 The executable and helper names inside `Chronio.app` intentionally remain the
 ActivityWatch module names. `Contents/MacOS/aw-qt` is the app executable and
-the bundled `aw-server`, `aw-server-rust`, `aw-watcher-afk`,
-`aw-watcher-window`, `aw-watcher-input`, and `aw-notify` helpers remain
-discoverable by the existing module manager.
+the bundled `aw-server`, `aw-watcher-afk`, `aw-watcher-window`,
+`aw-watcher-input`, and `aw-notify` helpers remain discoverable by the existing
+module manager. Chronio uses the Python/Flask `aw-server` path; `aw-server-rust`
+is not part of the active macOS package.
+
+## Server Build Stance
+
+Chronio V2 does not need `aw-server-rust`. The packaged app starts the
+Python/Flask `aw-server`, serves the Vue UI from that server, and bundles the
+watchers used by the Chronio daily review workflow. `aw-server-rust` remains an
+upstream ActivityWatch component only; it is not in Chronio's default
+build/test/package surface.
 
 The bundle keeps the current ActivityWatch data, config, watcher bucket, and
 helper paths for this slice. Renaming those paths would create a migration
@@ -35,7 +44,7 @@ toolchain installed. The V2 handoff artifact was built with Python 3.9:
 
 ```sh
 poetry install --no-root
-make build AW_EXTRAS=true SKIP_SERVER_RUST=true
+make build AW_EXTRAS=true
 make dist/Chronio.dmg
 ```
 
